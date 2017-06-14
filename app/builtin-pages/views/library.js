@@ -1,6 +1,7 @@
 import * as yo from 'yo-yo'
 import {FileTree, ArchivesList} from 'builtin-pages-lib'
 import {pluralize, makeSafe} from '../../lib/strings'
+import {writeToClipboard} from '../../lib/fg/event-handlers'
 import {throttle} from '../../lib/functions'
 import renderTabs from '../com/tabs'
 import renderGraph from '../com/peer-history-graph'
@@ -366,6 +367,7 @@ function rArchive (archiveInfo) {
       ${rNotSaved(archiveInfo)}
       ${rMissingLocalPathMessage(archiveInfo)}
       ${rStagingArea(archiveInfo)}
+      ${rHelpInfo(archiveInfo)}
 
       <h2>Network activity</h2>
       <section class="peer-history">
@@ -385,6 +387,47 @@ function rArchive (archiveInfo) {
         })[currentSection]()}
       </section>
     </div>
+  `
+}
+
+function rHelpInfo (archiveInfo) {
+  return yo`
+    <section class="help">
+      <div class="intro">
+        <p>
+          Get started by adding some files:
+        </p>
+        <div class="actions">
+          <button class="btn" onclick=${onOpenFolder}>
+            <i class="fa fa-folder"></i>
+            Open folder
+          </button>
+
+          <span>or</span>
+
+          <div class="import">
+            <code>${archiveInfo.userSettings.localPath}</code>
+            <button class="btn" onclick>
+              <i class="fa fa-plus"></i>
+              Import files
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="terminal">
+        <div>
+          <p>On the command line:</p>
+        </div>
+
+        <pre>
+cd ${archiveInfo.userSettings.localPath}
+echo ${"\"Hello, world\" >"} index.html
+
+          <button class="btn" onclick=${onCopyPath}><i class="fa fa-clipboard"></i> Copy path</button>
+        </pre>
+      </div>
+    </section>
   `
 }
 
@@ -767,6 +810,15 @@ function onChangeArchiveListItem (e) {
 async function onCreateArchive () {
   var archive = await DatArchive.create()
   history.pushState({}, null, 'beaker://library/' + archive.url.slice('dat://'.length))
+}
+
+function onCopyPath () {
+  writeToClipboard(selectedArchive.userSettings.localPath)
+  toast.create('Folder path copied to clipboard')
+}
+
+function onOpenFolder (e, archiveInfo) {
+  beakerBrowser.openFolder(selectedArchive.userSettings.localPath)
 }
 
 // helpers
