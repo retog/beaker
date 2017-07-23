@@ -66,13 +66,13 @@ export async function query (profileId, query) {
   if ('isSaved' in query) {
     WHERE.push('archives.profileId = ?')
     values.push(profileId)
-    if (query.isSaved)  WHERE.push('archives.isSaved = 1')
+    if (query.isSaved) WHERE.push('archives.isSaved = 1')
     if (!query.isSaved) WHERE.push('archives.isSaved = 0')
   }
   if (WHERE.length) WHERE = `WHERE ${WHERE.join(' AND ')}`
   else WHERE = ''
   var archives = await db.all(`
-    SELECT archives_meta.*, archives.isSaved, archives.localPath
+    SELECT archives_meta.*, archives.isSaved, archives.autoDownload, archives.autoUpload, archives.localPath
       FROM archives_meta
       LEFT JOIN archives ON archives_meta.key = archives.key
       ${WHERE}
@@ -82,19 +82,16 @@ export async function query (profileId, query) {
   archives.forEach(archive => {
     archive.url = `dat://${archive.key}`
     archive.isOwner = archive.isOwner != 0
-    archive.createdBy = {
-      title: archive.createdByTitle,
-      url: archive.createdByUrl
-    }
-    try { archive.forkOf = JSON.parse(archive.forkOf) } catch (e) {}
     archive.userSettings = {
       isSaved: archive.isSaved != 0,
+      autoDownload: archive.autoDownload != 0,
+      autoUpload: archive.autoUpload != 0,
       localPath: archive.localPath
     }
 
-    delete archive.createdByTitle
-    delete archive.createdByUrl
     delete archive.isSaved
+    delete archive.autoDownload
+    delete archive.autoUpload
     delete archive.localPath
   })
   return archives
@@ -140,6 +137,8 @@ export async function getUserSettings (profileId, key) {
       SELECT * FROM archives WHERE profileId = ? AND key = ?
     `, [profileId, key])
     settings.isSaved = !!settings.isSaved
+    settings.autoDownload = !!settings.autoDownload
+    settings.autoUpload = !!settings.autoUpload
     return settings
   } catch (e) {
     return {}
@@ -159,29 +158,31 @@ export async function setUserSettings (profileId, key, newValues = {}) {
   var release = await lock('archives-db')
   try {
     // fetch current
-    var value = await db.get(`
-      SELECT * FROM archives WHERE profileId = ? AND key = ?
-    `, [profileId, key])
+    var value = await getUserSettings(profileId, key)
 
-    if (!value) {
+    if (typeof value.key === 'undefined') {
       // create
       value = {
         profileId,
         key,
         isSaved: newValues.isSaved,
+        autoDownload: ('autoDownload' in newValues) ? newValues.autoDownload : newValues.isSaved,
+        autoUpload: ('autoUpload' in newValues) ? newValues.autoUpload : newValues.isSaved,
         localPath: newValues.localPath
       }
       await db.run(`
-        INSERT INTO archives (profileId, key, isSaved, localPath) VALUES (?, ?, ?, ?)
-      `, [profileId, key, value.isSaved ? 1 : 0, value.localPath])
+        INSERT INTO archives (profileId, key, isSaved, autoDownload, autoUpload, localPath) VALUES (?, ?, ?, ?, ?, ?)
+      `, [profileId, key, flag(value.isSaved), flag(value.autoDownload), flag(value.autoUpload), value.localPath])
     } else {
       // update
-      var { isSaved, localPath } = newValues
+      var { isSaved, autoDownload, autoUpload, localPath } = newValues
       if (typeof isSaved === 'boolean') value.isSaved = isSaved
+      if (typeof autoDownload === 'boolean') value.autoDownload = autoDownload
+      if (typeof autoUpload === 'boolean') value.autoUpload = autoUpload
       if (typeof localPath === 'string') value.localPath = localPath
       await db.run(`
-        UPDATE archives SET isSaved = ?, localPath = ? WHERE profileId = ? AND key = ?
-      `, [value.isSaved ? 1 : 0, value.localPath, profileId, key])
+        UPDATE archives SET isSaved = ?, autoDownload = ?, autoUpload = ?, localPath = ? WHERE profileId = ? AND key = ?
+      `, [flag(value.isSaved), flag(value.autoDownload), flag(value.autoUpload), value.localPath, profileId, key])
     }
 
     events.emit('update:archive-user-settings', key, value)
@@ -213,9 +214,6 @@ export async function getMeta (key) {
 
     // massage some values
     meta.isOwner = !!meta.isOwner
-    try { meta.forkOf = JSON.parse(meta.forkOf) } catch (e) {}
-    meta.createdBy = {url: meta.createdByUrl, title: meta.createdByTitle}
-    delete meta.createdByUrl; delete meta.createdByTitle
     return meta
   } catch (e) {
     return {}
@@ -233,23 +231,24 @@ export async function setMeta (key, value = {}) {
   }
 
   // extract the desired values
-  var {title, description, forkOf, createdBy, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner} = value
+  var {title, description, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner} = value
   isOwner = isOwner ? 1 : 0
-  forkOf = Array.isArray(forkOf) ? JSON.stringify(forkOf) : forkOf
-  var createdByUrl = createdBy && createdBy.url ? createdBy.url : ''
-  var createdByTitle = createdBy && createdBy.title ? createdBy.title : ''
 
   // write
   await db.run(`
     INSERT OR REPLACE INTO
-      archives_meta (key, title, description, forkOf, createdByUrl, createdByTitle, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner)
-      VALUES        (?,   ?,     ?,           ?,      ?,            ?,              ?,     ?,        ?,           ?,                      ?)
-  `,                [key, title, description, forkOf, createdByUrl, createdByTitle, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner])
+      archives_meta (key, title, description, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner)
+      VALUES        (?,   ?,     ?,           ?,     ?,        ?,           ?,                      ?)
+  `, [key, title, description, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner])
   events.emit('update:archive-meta', key, value)
 }
 
 // internal methods
 // =
+
+function flag (b) {
+  return b ? 1 : 0
+}
 
 export function extractOrigin (originURL) {
   var urlp = url.parse(originURL)

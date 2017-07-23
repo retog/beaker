@@ -1,6 +1,8 @@
+/* globals Event beaker DatArchive history beakerBrowser confirm */
+
 import * as yo from 'yo-yo'
 import {FileTree, ArchivesList} from 'builtin-pages-lib'
-import {pluralize, makeSafe} from '../../lib/strings'
+import {makeSafe} from '../../lib/strings'
 import {throttle} from '../../lib/functions'
 import renderTabs from '../com/tabs'
 import renderGraph from '../com/peer-history-graph'
@@ -8,23 +10,23 @@ import renderFiles from '../com/files-list'
 import renderChanges from '../com/archive-changes'
 import {niceDate} from '../../lib/time'
 import prettyBytes from 'pretty-bytes'
-import toggleable, {closeAllToggleables} from '../com/toggleable'
+import toggleable from '../com/toggleable'
 import * as toast from '../com/toast'
 import * as sharePopup from '../com/share-popup'
 
 // HACK FIX
 // the good folk of whatwg didnt think to include an event for pushState(), so let's add one
 // -prf
-var _wr = function(type) {
-  var orig = window.history[type];
-  return function() {
-    var rv = orig.apply(this, arguments);
-    var e = new Event(type.toLowerCase());
-    e.arguments = arguments;
-    window.dispatchEvent(e);
-    return rv;
-  };
-};
+var _wr = function (type) {
+  var orig = window.history[type]
+  return function () {
+    var rv = orig.apply(this, arguments)
+    var e = new Event(type.toLowerCase())
+    e.arguments = arguments
+    window.dispatchEvent(e)
+    return rv
+  }
+}
 window.history.pushState = _wr('pushState')
 window.history.replaceState = _wr('replaceState')
 
@@ -88,7 +90,7 @@ async function parseURLKey () {
   if (path === '/' || !path) return false
   try {
     // extract key from url
-    var name = /^\/([^\/]+)/.exec(path)[1]
+    var name = /^\/([^/]+)/.exec(path)[1]
     if (/[0-9a-f]{64}/i.test(name)) return name
     return DatArchive.resolveName(name)
   } catch (e) {
@@ -125,11 +127,11 @@ async function loadCurrentArchive () {
       var fileTree = new FileTree(aLastPublish, {onDemand: true})
 
       // fetch all data
-      var [history, fileTreeRes] = await Promise.all([
+      var [history] = await Promise.all([
         a.history({end: 20, reverse: true, timeout: 10e3}),
         fileTree.setup().catch(err => null)
       ])
-      /*dont await*/ reloadDiff()
+      /* dont await */ reloadDiff()
       selectedArchive.history = history
       selectedArchive.historyPaginationOffset = 20
       selectedArchive.fileTree = fileTree
@@ -176,7 +178,7 @@ function update () {
   var isEmpty = !(isTrashOpen || selectedArchive || selectedArchiveKey)
   var viewCls = isEmpty ? 'empty' : ''
 
-/*
+  /*
   TODO - sort control, needs to be restored? -prf
   <div class="sort">
     <select name="sort" oninput=${onChangeSort}>
@@ -258,8 +260,7 @@ function rArchivesList () {
   var filteredArchives = archivesList.archives.filter(archive => {
     if (!currentFilter) {
       return true
-    }
-    else if (currentFilter && archive.title && archive.title.toLowerCase().indexOf(currentFilter) !== -1) {
+    } else if (currentFilter && archive.title && archive.title.toLowerCase().indexOf(currentFilter) !== -1) {
       return true
     }
     return false
@@ -309,14 +310,14 @@ function rArchive (archiveInfo) {
       <section class="tabs-content">
         ${renderTabs(currentSection, [
           {id: 'files', label: 'Published files', onclick: onClickTab('files')},
-          {id: 'metadata', label: 'About', onclick: onClickTab('metadata')},
           {id: 'log', label: 'History', onclick: onClickTab('log')},
-          {id: 'network', label: 'Network', onclick: onClickTab('network')}
+          {id: 'network', label: 'Network', onclick: onClickTab('network')},
+          {id: 'settings', label: 'Settings', onclick: onClickTab('settings')}
         ].filter(Boolean))}
         ${({
           files: () => rFiles(archiveInfo),
           log: () => rHistory(archiveInfo),
-          metadata: () => rMetadata(archiveInfo),
+          settings: () => rSettings(archiveInfo),
           network: () => rNetwork(archiveInfo)
         })[currentSection]()}
       </section>
@@ -338,10 +339,10 @@ function rViewHeader (archiveInfo) {
   } else {
     if (archiveInfo.userSettings.isSaved) {
       toggleSaveIcon = 'fa-times-circle'
-      toggleSaveText = 'Stop syncing'
+      toggleSaveText = 'Remove from library'
     } else {
-      toggleSaveIcon = 'fa-check-circle'
-      toggleSaveText = 'Sync for offline'
+      toggleSaveIcon = 'fa-plus'
+      toggleSaveText = 'Add to library'
     }
   }
 
@@ -363,7 +364,7 @@ function rViewHeader (archiveInfo) {
           <span>${niceName(archiveInfo)}</span>
           <i class="fa fa-external-link"></i>
         </a>
-        ${archiveInfo.isOwner ? '' : yo`<span class="readonly"><i class="fa fa-eye"></i>Read-only</span>`}
+        ${archiveInfo.isOwner ? '' : yo`<span class="readonly">Read-only</span>`}
       </h1>
       <div class="actions">
         <button class="btn primary" onclick=${onShare}>
@@ -371,7 +372,7 @@ function rViewHeader (archiveInfo) {
           Share
         </button>
         ${toggleable(yo`
-          <div class="dropdown-btn-container toggleable-container">
+          <div class="dropdown-btn-container toggleable-container" data-toggle-id="archive-dropdown-menu">
             <button class="btn toggleable">
               <i class="fa fa-caret-down"></i>
             </button>
@@ -484,7 +485,7 @@ function rStagingArea (archiveInfo) {
   }
 
   const backLink = () => yo`
-      <span class="back" onclick=${e => {isStagingOpen = false; update();}}>
+      <span class="back" onclick=${e => { isStagingOpen = false; update() }}>
         <i class="fa fa-angle-left"></i>
         Back
       </span>
@@ -501,7 +502,6 @@ function rStagingArea (archiveInfo) {
     `
   }
 
-  var stats = archiveInfo.diffStats
   return yo`
     <div class="staging">
       ${rViewHeader(archiveInfo)}
@@ -537,7 +537,7 @@ function rHistory (archiveInfo) {
   var rows = archiveInfo.history.map(function (item, i) {
     var rev = item.version
     var revType = makeSafe(item.type)
-    var urlRev = (revType === 'put') ? rev : (rev - 1)  // give the one revision prior for deletions
+    var urlRev = (revType === 'put') ? rev : (rev - 1) // give the one revision prior for deletions
     revType = revType === 'put' ? 'added' : 'deleted'
 
     return `
@@ -574,7 +574,14 @@ function rHistory (archiveInfo) {
   return yo`<div class="history">${rowEls}${loadMoreBtn}</div>`
 }
 
-function rMetadata (archiveInfo) {
+function rSettings (archiveInfo) {
+  const isSaved = archiveInfo.userSettings.isSaved
+  const isChecked = {
+    autoDownload: isSaved && archiveInfo.userSettings.autoDownload,
+    autoUpload: isSaved && archiveInfo.userSettings.autoDownload
+  }
+
+  // editable title and description
   var titleEl, descEl
   if (archiveInfo.isOwner && isEditingInfo) {
     titleEl = yo`
@@ -602,7 +609,11 @@ function rMetadata (archiveInfo) {
     titleEl = yo`<td>${niceName(archiveInfo)}</td>`
     descEl = yo`<td>${niceDesc(archiveInfo)}</td>`
   }
+
+  // tools that differ if owner
   var sizeRows
+  var networkSettingsEls
+  var toolsEls
   if (archiveInfo.isOwner) {
     sizeRows = [
       yo`<tr><td class="label">Staging</td><td>${prettyBytes(archiveInfo.stagingSizeLessIgnored)} (${prettyBytes(archiveInfo.stagingSize - archiveInfo.stagingSizeLessIgnored)} ignored)</td></tr>`,
@@ -610,9 +621,39 @@ function rMetadata (archiveInfo) {
     ]
   } else {
     sizeRows = yo`<tr><td class="label">Size</td><td>${prettyBytes(archiveInfo.metaSize)}</td></tr>`
+    networkSettingsEls = [
+      isSaved
+        ? ''
+        : yo`
+            <p><a onclick=${onToggleSaved} class="link">Add this site to your library</a> to configure the download settings.</p>
+          `,
+      yo`
+        <div class="setting ${!isSaved ? 'disabled' : ''}">
+          <h5>Download files</h5>
+          <fieldset>
+            <label onclick=${(e) => onSetAutoDownload(e, false)}>
+              <input type="radio" name="download_setting" disabled=${!isSaved} checked=${!isChecked.autoDownload} />
+              When I visit
+            </label>
+            <label onclick=${(e) => onSetAutoDownload(e, true)}>
+              <input type="radio" name="download_setting" disabled=${!isSaved} checked=${isChecked.autoDownload} />
+              Always <span class="muted">(Sync for offline use)</span>
+            </label>
+          </fieldset>
+        </div>
+      `
+    ]
+    toolsEls = yo`
+      <div class="tools">
+        <a class="link" onclick=${onDeleteDownloadedFiles}><i class="fa fa-trash"></i> Delete downloaded files</a>
+      </div>
+    `
   }
+
+  // render
   return yo`
-    <div class="metadata">
+    <div class="settings">
+      ${networkSettingsEls}
       <table>
         <tr><td class="label">Title</td>${titleEl}</tr>
         <tr><td class="label">Description</td>${descEl}</tr>
@@ -622,6 +663,7 @@ function rMetadata (archiveInfo) {
         <tr><td class="label">Editable</td><td>${archiveInfo.isOwner}</td></tr>
       </table>
       ${archiveInfo.isOwner && isEditingInfo ? yo`<button onclick=${onSaveSettings} class="save btn">Apply changes</button>` : ''}
+      ${toolsEls}
     </div>
   `
 }
@@ -695,7 +737,7 @@ async function onFork (e) {
   history.pushState({}, null, 'beaker://library/' + a.url.slice('dat://'.length))
 }
 
-function onClickEdit() {
+function onClickEdit () {
   isEditingInfo = true
   update()
 }
@@ -713,13 +755,11 @@ async function onSaveSettings () {
 }
 
 async function settingsOnKeyup (e) {
-  // enter-key
   if (e.keyCode == 13) {
+    // enter-key
     onSaveSettings()
-  }
-
-  // escape-key
-  else if (e.keyCode == 27) {
+  } else if (e.keyCode == 27) {
+    // escape-key
     isEditingInfo = false
     update()
   }
@@ -756,6 +796,25 @@ async function onUndelete (e, key) {
 
 async function onRestoreOldFolder () {
   await beaker.archives.restore(selectedArchive.key)
+  loadCurrentArchive()
+}
+
+async function onSetAutoDownload (e, value) {
+  if (selectedArchive.userSettings.autoDownload === value) {
+    return
+  }
+  selectedArchive.userSettings.autoDownload = value
+  await beaker.archives.update(selectedArchive.key, null, {autoDownload: value})
+  update()
+  toast.create('Settings updated.')
+}
+
+async function onDeleteDownloadedFiles () {
+  if (!confirm('Delete downloaded files? You will be able to redownload them from the p2p network.')) {
+    return false
+  }
+  await beaker.archives.clearFileCache(selectedArchive.key)
+  toast.create('All downloaded files have been deleted.')
   loadCurrentArchive()
 }
 
@@ -868,11 +927,11 @@ function onChangeFilter (e) {
   update()
 }
 
-function onChangeSort (e) {
-  var selectedIndex = e.target.selectedIndex
-  currentSort = e.target[selectedIndex].value
-  update()
-}
+// function onChangeSort (e) {
+//   var selectedIndex = e.target.selectedIndex
+//   currentSort = e.target[selectedIndex].value
+//   update()
+// }
 
 function onClearFilter () {
   currentFilter = ''
@@ -890,16 +949,6 @@ async function onClickBulkDelete () {
   })
 
   selectedArchives = []
-  update()
-}
-
-function onChangeArchiveListItem (e) {
-  e.stopPropagation()
-  var key = e.target.dataset.key
-  var bulkDeleteBtn = document.querySelector('.bulk-delete')
-
-  if (e.target.checked) selectedArchives.push(key)
-  else selectedArchives.splice(selectedArchives.indexOf(key), 1)
   update()
 }
 

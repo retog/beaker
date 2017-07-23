@@ -1,5 +1,6 @@
 import { protocol } from 'electron'
 import {parse as parseUrl} from 'url'
+import {join as joinPaths} from 'path'
 import parseDatUrl from 'parse-dat-url'
 import parseRange from 'range-parser'
 import once from 'once'
@@ -18,7 +19,6 @@ import * as sitedataDb from '../dbs/sitedata'
 import directoryListingPage from '../networks/dat/directory-listing-page'
 import errorPage from '../../lib/error-page'
 import * as mime from '../../lib/mime'
-import {DAT_MANIFEST_FILENAME} from '../../lib/const'
 
 // HACK
 // attempt to load utp-native to make sure it's correctly built
@@ -39,28 +39,11 @@ const REQUEST_TIMEOUT_MS = 30e3 // 30 seconds
 
 // content security policies
 const DAT_CSP = `
-default-src 'self' dat: blob:;
-script-src 'self' 'unsafe-eval' 'unsafe-inline' dat: blob:;
-style-src 'self' 'unsafe-inline' dat: blob:;
-img-src 'self' data: dat: blob:;
-font-src 'self' data: dat: blob:;
+default-src * data: blob:;
+script-src * 'unsafe-eval' 'unsafe-inline' data: blob:;
+style-src * 'unsafe-inline' data: blob:;
 object-src 'none';
 `.replace(/\n/g, ' ')
-
-const CUSTOM_DAT_CSP = origins => {
-  if (Array.isArray(origins)) origins = origins.map(o => `http://${o} https://${o}`).join(' ')
-  else origins = ''
-  return `
-default-src 'self' dat: blob:;
-script-src 'self' 'unsafe-eval' 'unsafe-inline' dat: blob:;
-style-src 'self' 'unsafe-inline' dat: blob:;
-img-src 'self' data: dat: ${origins} blob:;
-font-src 'self' data: dat: ${origins} blob:;
-media-src 'self' dat: ${origins} blob:;
-connect-src 'self' dat: ${origins};
-object-src 'none';
-`.replace(/\n/g, ' ')
-}
 
 // globals
 // =
@@ -107,7 +90,7 @@ async function datServer (req, res) {
       'Content-Security-Policy': "default-src 'unsafe-inline' beaker:;",
       'Access-Control-Allow-Origin': '*'
     })
-    res.end(errorPage(errorPageInfo ? errorPageInfo : (code + ' ' + status)))
+    res.end(errorPage(errorPageInfo || (code + ' ' + status)))
   })
   var queryParams = parseUrl(req.url, true).query
   var fileReadStream
@@ -163,14 +146,13 @@ async function datServer (req, res) {
     // cleanup
     aborted = true
     debug('Timed out searching for', archiveKey)
-    var hadFileReadStream = !!fileReadStream
     if (fileReadStream) {
       fileReadStream.destroy()
       fileReadStream = null
     }
 
     // error page
-    var resource = !!archive ? 'page' : 'site'
+    var resource = archive ? 'page' : 'site'
     cb(504, `Timed out searching for ${resource}`, {
       resource,
       errorCode: 'dat-timeout',
@@ -186,31 +168,6 @@ async function datServer (req, res) {
     debug('Failed to open archive', archiveKey, err)
     cleanup()
     return cb(500, 'Failed')
-  }
-
-  // handle zip download
-  if (urlp.query.download_as === 'zip') {
-    cleanup()
-
-    // (try to) get the title from the manifest
-    let zipname = false
-    try {
-      let manifest = await pda.readManifest(archive)
-      zipname = slugify(manifest.title || '').toLowerCase()
-    } catch (e) {/*ignore*/}
-    zipname = zipname || 'archive'
-
-    // serve the zip
-    res.writeHead(200, 'OK', {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${zipname}.zip"`,
-      'Content-Security-Policy': DAT_CSP,
-      'Access-Control-Allow-Origin': '*'
-    })
-    var zs = toZipStream(archive)
-    zs.on('error', err => console.log('Error while producing .zip file', err))
-    zs.pipe(res)
-    return
   }
 
   // parse path
@@ -230,18 +187,52 @@ async function datServer (req, res) {
       return cb(404, 'Version too high')
     }
     archiveFS = archive.checkout(seq)
-  } else {
-    // read dat.json from archive only (never from staging)
-    if (filepath === '/' + DAT_MANIFEST_FILENAME) {
-      archiveFS = archive
+  }
+
+  // read the manifest (it's needed in a couple places)
+  var manifest
+  try { manifest = await pda.readManifest(archiveFS) } catch (e) { manifest = null }
+
+  // handle zip download
+  if (urlp.query.download_as === 'zip') {
+    cleanup()
+
+    // (try to) get the title from the manifest
+    let zipname = false
+    if (manifest) {
+      zipname = slugify(manifest.title || '').toLowerCase()
     }
+    zipname = zipname || 'archive'
+
+    // serve the zip
+    res.writeHead(200, 'OK', {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${zipname}.zip"`,
+      'Content-Security-Policy': DAT_CSP,
+      'Access-Control-Allow-Origin': '*'
+    })
+    var zs = toZipStream(archive)
+    zs.on('error', err => console.log('Error while producing .zip file', err))
+    zs.pipe(res)
+    return
   }
 
   // lookup entry
   debug('Attempting to lookup', archiveKey, filepath)
+  var statusCode = 200
   var entry
   const tryStat = async (path) => {
+    // abort if we've already found it
     if (entry) return
+    // apply the web_root config
+    if (manifest && manifest.web_root) {
+      if (path) {
+        path = joinPaths(manifest.web_root, path)
+      } else {
+        path = manifest.web_root
+      }
+    }
+    // attempt lookup
     try {
       entry = await pda.stat(archiveFS, path)
       entry.path = path
@@ -277,14 +268,21 @@ async function datServer (req, res) {
       'Content-Security-Policy': DAT_CSP,
       'Access-Control-Allow-Origin': '*'
     })
-    return res.end(await directoryListingPage(archiveFS, filepath))
+    return res.end(await directoryListingPage(archiveFS, filepath, manifest && manifest.web_root))
   }
 
   // handle not found
   if (!entry) {
+    statusCode = 404
     debug('Entry not found:', urlp.path)
-    cleanup()
-    return cb(404, 'File Not Found')
+
+    // check for a fallback page
+    await tryStat(manifest.fallback_page)
+
+    if (!entry) {
+      cleanup()
+      return cb(404, 'File Not Found')
+    }
   }
 
   // caching if-match
@@ -299,15 +297,15 @@ async function datServer (req, res) {
   // }
 
   // fetch the permissions
-  var origins
-  try {
-    origins = await sitedataDb.getNetworkPermissions('dat://' + archiveKey)
-  } catch (e) {
-    origins = []
-  }
+  // TODO this has been disabled until we can create a better UX -prf
+  // var origins
+  // try {
+  //   origins = await sitedataDb.getNetworkPermissions('dat://' + archiveKey)
+  // } catch (e) {
+  //   origins = []
+  // }
 
   // handle range
-  var statusCode = 200
   res.setHeader('Accept-Ranges', 'bytes')
   var range = req.headers.range && parseRange(entry.size, req.headers.range)
   if (range && range.type === 'bytes') {
@@ -334,7 +332,7 @@ async function datServer (req, res) {
       headersSent = true
       var headers = {
         'Content-Type': mimeType,
-        'Content-Security-Policy': CUSTOM_DAT_CSP(origins),
+        'Content-Security-Policy': DAT_CSP,
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'public, max-age: 60'
         // ETag

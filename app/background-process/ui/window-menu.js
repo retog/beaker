@@ -5,7 +5,12 @@ import datDns from '../networks/dat/dns'
 var darwinMenu = {
   label: 'Beaker',
   submenu: [
-    { label: 'About Beaker', role: 'about' },
+    {
+      label: 'Preferences',
+      click (item, win) {
+        if (win) win.webContents.send('command', 'file:new-tab', 'beaker://settings')
+      }
+    },
     { type: 'separator' },
     { label: 'Services', role: 'services', submenu: [] },
     { type: 'separator' },
@@ -13,7 +18,7 @@ var darwinMenu = {
     { label: 'Hide Others', accelerator: 'Command+Alt+H', role: 'hideothers' },
     { label: 'Show All', role: 'unhide' },
     { type: 'separator' },
-    { label: 'Quit', accelerator: 'Command+Q', click() { app.quit() } }
+    { label: 'Quit', accelerator: 'Command+Q', click () { app.quit() } }
   ]
 }
 
@@ -45,8 +50,7 @@ var fileMenu = {
       click: function (item, win) {
         if (win) {
           dialog.showOpenDialog({ title: 'Open file...', properties: ['openFile', 'createDirectory'] }, files => {
-            if (files && files[0])
-              win.webContents.send('command', 'file:new-tab', 'file://'+files[0])
+            if (files && files[0]) { win.webContents.send('command', 'file:new-tab', 'file://' + files[0]) }
           })
         }
       }
@@ -79,16 +83,16 @@ var fileMenu = {
 var editMenu = {
   label: 'Edit',
   submenu: [
-    { label: "Undo", accelerator: "CmdOrCtrl+Z", selector: "undo:" },
-    { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
-    { type: "separator" },
-    { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
-    { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
-    { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
-    { label: "Select All", accelerator: "CmdOrCtrl+A", selector: "selectAll:" },
+    { label: 'Undo', accelerator: 'CmdOrCtrl+Z', selector: 'undo:' },
+    { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', selector: 'redo:' },
+    { type: 'separator' },
+    { label: 'Cut', accelerator: 'CmdOrCtrl+X', selector: 'cut:' },
+    { label: 'Copy', accelerator: 'CmdOrCtrl+C', selector: 'copy:' },
+    { label: 'Paste', accelerator: 'CmdOrCtrl+V', selector: 'paste:' },
+    { label: 'Select All', accelerator: 'CmdOrCtrl+A', selector: 'selectAll:' },
     {
-      label: "Find in Page",
-      accelerator: "CmdOrCtrl+F",
+      label: 'Find in Page',
+      accelerator: 'CmdOrCtrl+F',
       click: function (item, win) {
         if (win) win.webContents.send('command', 'edit:find')
       }
@@ -119,7 +123,7 @@ var viewMenu = {
       if (win) win.webContents.send('command', 'view:hard-reload')
     }
   },
-  { type: "separator" },
+  { type: 'separator' },
   {
     label: 'Zoom In',
     accelerator: 'CmdOrCtrl+Plus',
@@ -141,7 +145,7 @@ var viewMenu = {
       if (win) win.webContents.send('command', 'view:zoom-reset')
     }
   },
-  { type: "separator" },
+  { type: 'separator' },
   {
     label: 'Toggle DevTools',
     accelerator: (process.platform === 'darwin') ? 'Alt+CmdOrCtrl+I' : 'Shift+CmdOrCtrl+I',
@@ -192,7 +196,6 @@ var historyMenu = {
   ]
 }
 
-
 var windowMenu = {
   label: 'Window',
   role: 'window',
@@ -233,7 +236,6 @@ if (process.platform == 'darwin') {
   })
 }
 
-
 var beakerDevMenu = {
   label: 'BeakerDev',
   submenu: [{
@@ -241,24 +243,23 @@ var beakerDevMenu = {
     click: function () {
       BrowserWindow.getFocusedWindow().webContents.reloadIgnoringCache()
     }
-  },{
+  }, {
     label: 'Open Archives Debug Page',
     click: function (item, win) {
       if (win) win.webContents.send('command', 'file:new-tab', 'beaker://internal-archives/')
     }
-  },{
+  }, {
     label: 'Open Dat-DNS Cache Page',
     click: function (item, win) {
       if (win) win.webContents.send('command', 'file:new-tab', 'beaker://dat-dns-cache/')
     }
-  },{
+  }, {
     label: 'Toggle Shell-Window DevTools',
     click: function () {
       BrowserWindow.getFocusedWindow().toggleDevTools()
     }
   }]
 }
-
 
 var helpMenu = {
   label: 'Help',

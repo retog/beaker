@@ -1,6 +1,5 @@
-import {dialog, BrowserWindow} from 'electron'
+import {dialog} from 'electron'
 import path from 'path'
-import {parse as parseURL} from 'url'
 import parseDatURL from 'parse-dat-url'
 import pda from 'pauls-dat-api'
 import jetpack from 'fs-jetpack'
@@ -8,12 +7,11 @@ import concat from 'concat-stream'
 import datDns from '../networks/dat/dns'
 import * as datLibrary from '../networks/dat/library'
 import * as archivesDb from '../dbs/archives'
-import * as sitedataDb from '../dbs/sitedata'
 import {showModal} from '../ui/modals'
 import {timer} from '../../lib/time'
 import {getWebContentsWindow} from '../../lib/electron'
-import {queryPermission, requestPermission} from '../ui/permissions'
-import { 
+import {queryPermission, grantPermission, requestPermission} from '../ui/permissions'
+import {
   DAT_MANIFEST_FILENAME,
   DAT_HASH_REGEX,
   DAT_QUOTA_DEFAULT_BYTES_ALLOWED,
@@ -26,7 +24,6 @@ import {
   QuotaExceededError,
   ArchiveNotWritableError,
   InvalidURLError,
-  NotFoundError,
   ProtectedFileNotWritableError,
   InvalidPathError
 } from 'beaker-error-constants'
@@ -40,7 +37,7 @@ const to = (opts) =>
     : DEFAULT_DAT_API_TIMEOUT
 
 export default {
-  async createArchive({title, description} = {}) {
+  async createArchive ({title, description} = {}) {
     // initiate the modal
     var win = getWebContentsWindow(this.sender)
     // DISABLED
@@ -48,13 +45,18 @@ export default {
     // are we sure it's the best policy anyway?
     // -prf
     // await assertSenderIsFocused(this.sender)
-    var createdBy = this.sender.getURL()
-    var res = await showModal(win, 'create-archive', {title, description, createdBy})
+
+    // run the creation modal
+    var res = await showModal(win, 'create-archive', {title, description})
     if (!res || !res.url) throw new UserDeniedError()
+
+    // grant write permissions to the creating app
+    var newArchiveKey = await lookupUrlDatKey(res.url)
+    grantPermission('modifyDat:' + newArchiveKey, this.sender.getURL())
     return res.url
   },
 
-  async forkArchive(url, {title, description} = {}) {
+  async forkArchive (url, {title, description} = {}) {
     // initiate the modal
     var win = getWebContentsWindow(this.sender)
     // DISABLED
@@ -62,16 +64,21 @@ export default {
     // are we sure it's the best policy anyway?
     // -prf
     // await assertSenderIsFocused(this.sender)
-    var createdBy = this.sender.getURL()
+
+    // run the fork modal
     var key1 = await lookupUrlDatKey(url)
-    var key2 = await lookupUrlDatKey(createdBy)
+    var key2 = await lookupUrlDatKey(this.sender.getURL())
     var isSelfFork = key1 === key2
-    var res = await showModal(win, 'fork-archive', {url, title, description, createdBy, isSelfFork})
+    var res = await showModal(win, 'fork-archive', {url, title, description, isSelfFork})
     if (!res || !res.url) throw new UserDeniedError()
+
+    // grant write permissions to the creating app
+    var newArchiveKey = await lookupUrlDatKey(res.url)
+    grantPermission('modifyDat:' + newArchiveKey, this.sender.getURL())
     return res.url
   },
 
-  async loadArchive(url) {
+  async loadArchive (url) {
     if (!url || typeof url !== 'string') {
       return Promise.reject(new InvalidURLError())
     }
@@ -80,7 +87,7 @@ export default {
     return Promise.resolve(true)
   },
 
-  async getInfo(url, opts = {}) {
+  async getInfo (url, opts = {}) {
     return timer(to(opts), async () => {
       var info = await datLibrary.getArchiveInfo(url)
       if (this.sender.getURL().startsWith('beaker:')) {
@@ -101,21 +108,19 @@ export default {
 
         // manifest
         title: info.title,
-        description: info.description,
-        forkOf: info.forkOf,
-        createdBy: info.createdBy
+        description: info.description
       }
     })
   },
 
-  async diff(url, opts = {}) {
+  async diff (url, opts = {}) {
     var {archive, version} = await lookupArchive(url, opts)
     if (version) return [] // TODO
     if (!archive.staging) return []
     return pda.diff(archive.staging, {shallow: opts.shallow})
   },
 
-  async commit(url, opts = {}) {
+  async commit (url, opts = {}) {
     var {archive, version} = await lookupArchive(url, opts)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
     if (!archive.staging) return []
@@ -125,7 +130,7 @@ export default {
     return res
   },
 
-  async revert(url, opts = {}) {
+  async revert (url, opts = {}) {
     var {archive, version} = await lookupArchive(url, opts)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
     if (!archive.staging) return []
@@ -135,7 +140,7 @@ export default {
     return res
   },
 
-  async history(url, opts = {}) {
+  async history (url, opts = {}) {
     var reverse = opts.reverse === true
     var {start, end} = opts
     var {archive, version} = await lookupArchive(url, opts)
@@ -168,17 +173,17 @@ export default {
     })
   },
 
-  async stat(url, opts = {}) {
+  async stat (url, opts = {}) {
     var {archive, filepath} = await lookupArchive(url, opts)
     return pda.stat(archive.checkoutFS, filepath)
   },
 
-  async readFile(url, opts = {}) {
+  async readFile (url, opts = {}) {
     var {archive, filepath} = await lookupArchive(url, opts)
     return pda.readFile(archive.checkoutFS, filepath, opts)
   },
 
-  async writeFile(url, data, opts = {}) {
+  async writeFile (url, data, opts = {}) {
     var {archive, filepath, version} = await lookupArchive(url, opts)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
     var senderOrigin = archivesDb.extractOrigin(this.sender.getURL())
@@ -189,17 +194,16 @@ export default {
     return pda.writeFile(archive.stagingFS, filepath, data, opts)
   },
 
-  async unlink(url) {
+  async unlink (url) {
     var {archive, filepath, version} = await lookupArchive(url)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
-    var senderOrigin = archivesDb.extractOrigin(this.sender.getURL())
     await assertWritePermission(archive, this.sender)
     await assertUnprotectedFilePath(filepath, this.sender)
     return pda.unlink(archive.stagingFS, filepath)
   },
 
   // TODO copy-disabled
-  /*async copy(url, dstPath) {
+  /* async copy(url, dstPath) {
     return timer(to(), async (checkin) => {
       checkin('searching for archive')
       var {archive, filepath} = await lookupArchive(url)
@@ -209,10 +213,10 @@ export default {
       await assertUnprotectedFilePath(dstPath, this.sender)
       return pda.copy(archive.stagingFS, filepath, dstPath)
     })
-  },*/
+  }, */
 
   // TODO rename-disabled
-  /*async rename(url, dstPath) {
+  /* async rename(url, dstPath) {
     return timer(to(), async (checkin) => {
       checkin('searching for archive')
       var {archive, filepath} = await lookupArchive(url)
@@ -223,16 +227,21 @@ export default {
       await assertUnprotectedFilePath(dstPath, this.sender)
       return pda.rename(archive.stagingFS, filepath, dstPath)
     })
-  },*/
+  }, */
 
-  async download(url, opts = {}) {
-    var {archive, filepath, version} = await lookupArchive(url, opts)
-    if (version) throw new Error('Not yet supported: can\'t download() old versions yet. Sorry!') // TODO
-    return pda.download(archive, filepath)
+  async download (url, opts = {}) {
+    return timer(to(opts), async (checkin) => {
+      var {archive, filepath, version} = await lookupArchive(url, false)
+      if (version) throw new Error('Not yet supported: can\'t download() old versions yet. Sorry!') // TODO
+      if (archive.writable) {
+        return // no need to download
+      }
+      return pda.download(archive, filepath)
+    })
   },
 
-  async readdir(url, opts = {}) {
-    var {archive, filepath, version} = await lookupArchive(url, opts)
+  async readdir (url, opts = {}) {
+    var {archive, filepath} = await lookupArchive(url, opts)
     var names = await pda.readdir(archive.checkoutFS, filepath, opts)
     if (opts.stat) {
       for (let i = 0; i < names.length; i++) {
@@ -245,7 +254,7 @@ export default {
     return names
   },
 
-  async mkdir(url) {
+  async mkdir (url) {
     var {archive, filepath, version} = await lookupArchive(url)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
     await assertWritePermission(archive, this.sender)
@@ -254,16 +263,15 @@ export default {
     return pda.mkdir(archive.stagingFS, filepath)
   },
 
-  async rmdir(url, opts = {}) {
+  async rmdir (url, opts = {}) {
     var {archive, filepath, version} = await lookupArchive(url, opts)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
-    var senderOrigin = archivesDb.extractOrigin(this.sender.getURL())
     await assertWritePermission(archive, this.sender)
     await assertUnprotectedFilePath(filepath, this.sender)
     return pda.rmdir(archive.stagingFS, filepath, opts)
   },
 
-  async createFileActivityStream(url, pathPattern) {
+  async createFileActivityStream (url, pathPattern) {
     var {archive} = await lookupArchive(url)
     if (archive.staging) {
       return pda.createFileActivityStream(archive, archive.stagingFS, pathPattern)
@@ -272,12 +280,12 @@ export default {
     }
   },
 
-  async createNetworkActivityStream(url) {
+  async createNetworkActivityStream (url) {
     var {archive} = await lookupArchive(url)
-    return await pda.createNetworkActivityStream(archive)
+    return pda.createNetworkActivityStream(archive)
   },
 
-  async importFromFilesystem(opts) {
+  async importFromFilesystem (opts) {
     assertTmpBeakerOnly(this.sender)
     var {archive, filepath, version} = await lookupArchive(opts.dst, opts)
     if (version) throw new ArchiveNotWritableError('Cannot modify a historic version')
@@ -287,11 +295,11 @@ export default {
       dstPath: filepath,
       ignore: opts.ignore,
       dryRun: opts.dryRun,
-      inplaceImport: opts.inplaceImport === false ? false : true
+      inplaceImport: opts.inplaceImport !== false
     })
   },
 
-  async exportToFilesystem(opts) {
+  async exportToFilesystem (opts) {
     assertTmpBeakerOnly(this.sender)
 
     // check if there are files in the destination path
@@ -322,11 +330,11 @@ export default {
       dstPath: opts.dst,
       ignore: opts.ignore,
       overwriteExisting: opts.overwriteExisting,
-      skipUndownloadedFiles: opts.skipUndownloadedFiles === false ? false : true
+      skipUndownloadedFiles: opts.skipUndownloadedFiles !== false
     })
   },
 
-  async exportToArchive(opts) {
+  async exportToArchive (opts) {
     assertTmpBeakerOnly(this.sender)
     var src = await lookupArchive(opts.src, opts)
     var dst = await lookupArchive(opts.dst, opts)
@@ -337,11 +345,11 @@ export default {
       dstArchive: dst.archive.stagingFS,
       dstPath: dst.filepath,
       ignore: opts.ignore,
-      skipUndownloadedFiles: opts.skipUndownloadedFiles === false ? false : true
+      skipUndownloadedFiles: opts.skipUndownloadedFiles !== false
     })
   },
 
-  async resolveName(name) {
+  async resolveName (name) {
     return datDns.resolveName(name)
   },
 
@@ -353,11 +361,10 @@ export default {
     // are we sure it's the best policy anyway?
     // -prf
     // await assertSenderIsFocused(this.sender)
-    var createdBy = this.sender.getURL()
-    var res = await showModal(win, 'select-archive', {title, buttonLabel, filters, createdBy})
+    var res = await showModal(win, 'select-archive', {title, buttonLabel, filters})
     if (!res || !res.url) throw new UserDeniedError()
     return res.url
-  },
+  }
 }
 
 // internal helpers
@@ -368,7 +375,7 @@ function assertUnprotectedFilePath (filepath, sender) {
   if (sender.getURL().startsWith('beaker:')) {
     return // can write any file
   }
-  if (filepath === '/dat.json') {
+  if (filepath === '/' + DAT_MANIFEST_FILENAME) {
     throw new ProtectedFileNotWritableError()
   }
 }
@@ -434,7 +441,7 @@ async function assertValidFilePath (filepath) {
   if (filepath.slice(-1) === '/') {
     throw new InvalidPathError('Files can not have a trailing slash')
   }
-  await assertValidPath (filepath)
+  await assertValidPath(filepath)
 }
 
 async function assertValidPath (fileOrFolderPath) {
@@ -443,11 +450,11 @@ async function assertValidPath (fileOrFolderPath) {
   }
 }
 
-async function assertSenderIsFocused (sender) {
-  if (!sender.isFocused()) {
-    throw new UserDeniedError('Application must be focused to spawn a prompt')
-  }
-}
+// async function assertSenderIsFocused (sender) {
+//   if (!sender.isFocused()) {
+//     throw new UserDeniedError('Application must be focused to spawn a prompt')
+//   }
+// }
 
 async function parseUrlParts (url) {
   var archiveKey, filepath, version
@@ -479,7 +486,7 @@ async function parseUrlParts (url) {
 // - sets archive.checkoutFS to what's requested by version
 // - throws if the filepath is invalid
 async function lookupArchive (url, opts = {}) {
-  return timer(to(opts), async (checkin) => {
+  async function lookupArchiveInner (checkin) {
     checkin('searching for archive')
 
     // lookup the archive
@@ -492,33 +499,18 @@ async function lookupArchive (url, opts = {}) {
       checkin('checking out a previous version from history')
       archive.checkoutFS = archive.checkout(+version)
     } else {
-      // access dat.json from archive only (never from staging)
-      if (filepath === '/' + DAT_MANIFEST_FILENAME) {
-        archive.checkoutFS = archive
-      } else {
-        archive.checkoutFS = archive.stagingFS
-      }
+      archive.checkoutFS = archive.stagingFS
     }
 
     return {archive, filepath, version}
-  })
-}
-
-async function getCreatedBy (sender) {
-  // fetch some origin info
-  var originTitle = null
-  var origin = archivesDb.extractOrigin(sender.getURL())
-  try {
-    var originKey = /dat:\/\/([^\/]*)/.exec(origin)[1]
-    var originMeta = await archivesDb.getMeta(originKey)
-    originTitle = originMeta.title || null
-  } catch (e) {}
-
-  // construct info
-  if (originTitle) {
-    return {url: origin, title: originTitle}
   }
-  return {url: origin}
+  if (opts === false) {
+    // dont use timeout
+    return lookupArchiveInner(noop)
+  } else {
+    // use timeout
+    return timer(to(opts), lookupArchiveInner)
+  }
 }
 
 async function lookupUrlDatKey (url) {
@@ -537,3 +529,5 @@ async function lookupUrlDatKey (url) {
 function massageHistoryObj ({name, version, type}) {
   return {path: name, version, type}
 }
+
+function noop () {}

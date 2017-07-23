@@ -5,7 +5,7 @@ const SIZES = {
   'create-archive': {width: 500, height: 340},
   'fork-archive': {width: 500, height: 390},
   'basic-auth': {width: 500, height: 320},
-  'select-archive': {width: 500, height: 450},
+  'select-archive': {width: 500, height: 375},
   prompt: {width: 500, height: 170}
 }
 
@@ -17,7 +17,7 @@ var modalWindow
 // exported apis
 // =
 
-export function showModal (parentWindow, modalName, opts={}) {
+export function showModal (parentWindow, modalName, opts = {}) {
   if (modalWindow) {
     // TODO create a new Error type
     return Promise.reject(new Error('Modal already active'))

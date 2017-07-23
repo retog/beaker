@@ -1,12 +1,14 @@
+/* globals URL beaker */
+
 import { remote } from 'electron'
 import * as pages from '../pages'
 import * as sidebar from './sidebar'
 import * as zoom from '../pages/zoom'
 import * as yo from 'yo-yo'
-import emitStream from 'emit-stream'
 import prettyHash from 'pretty-hash'
 import { UpdatesNavbarBtn } from './navbar/updates'
-import { DropMenuNavbarBtn } from './navbar/drop-menu'
+import { BrowserMenuNavbarBtn } from './navbar/browser-menu'
+import { PageMenuNavbarBtn } from './navbar/page-menu'
 import { DatSidebarBtn } from './navbar/dat-sidebar'
 import { SiteInfoNavbarBtn } from './navbar/site-info'
 import {pluralize} from '../../lib/strings'
@@ -26,7 +28,8 @@ const isDatHashRegex = /^[a-z0-9]{64}/i
 var toolbarNavDiv = document.getElementById('toolbar-nav')
 var updatesNavbarBtn = null
 var datSidebarBtn = null
-var dropMenuNavbarBtn = null
+var browserMenuNavbarBtn = null
+var pageMenuNavbarBtn = null
 var siteInfoNavbarBtn = null
 
 // autocomplete data
@@ -41,7 +44,8 @@ export function setup () {
   // create the button managers
   updatesNavbarBtn = new UpdatesNavbarBtn()
   datSidebarBtn = new DatSidebarBtn()
-  dropMenuNavbarBtn = new DropMenuNavbarBtn()
+  browserMenuNavbarBtn = new BrowserMenuNavbarBtn()
+  pageMenuNavbarBtn = new PageMenuNavbarBtn()
   siteInfoNavbarBtn = new SiteInfoNavbarBtn()
 }
 
@@ -75,14 +79,6 @@ export function showInpageFind (page) {
   var el = page.navbarEl.querySelector('.nav-find-input')
   el.focus()
   el.select()
-
-  // init search if there's a value leftover
-  // FIXME
-  // this behavior got lost in the switch over to using yo-yo
-  // do we want it back?
-  // -prf
-  // if (el.value)
-    // page.findInPageAsync(el.value)
 }
 
 export function hideInpageFind (page) {
@@ -120,14 +116,16 @@ export function updateLocation (page) {
   var isAddrElFocused = addrEl.matches(':focus')
   if (!isAddrElFocused || !addrEl.value) { // only update if not focused or empty, so we dont mess up what the user is doing
     addrEl.value = page.getIntendedURL()
-    if (isAddrElFocused) // if was focused, then select what we put in
-      addrEl.select()
+    if (isAddrElFocused) {
+      addrEl.select() // if was focused, then select what we put in
+    }
   }
 }
 
 export function closeMenus () {
-  dropMenuNavbarBtn.isDropdownOpen = false
-  dropMenuNavbarBtn.updateActives()
+  browserMenuNavbarBtn.isDropdownOpen = false
+  browserMenuNavbarBtn.updateActives()
+  pageMenuNavbarBtn.close()
 }
 
 // internal helpers
@@ -183,9 +181,22 @@ function render (id, page) {
   if (page && page.zoom != 0) {
     // I dont know what that formula is, so I solved this problem like any good programmer would, by stealing the values from chrome
     var zoomPct = ({
-      '-0.5': 90, '-1': 75, '-1.5': 67, '-2': 50, '-2.5': 33, '-3': 25,
+      '-0.5': 90,
+      '-1': 75,
+      '-1.5': 67,
+      '-2': 50,
+      '-2.5': 33,
+      '-3': 25,
       '0': 100,
-      '0.5': 110, '1': 125, '1.5': 150, '2': 175, '2.5': 200, '3': 250, '3.5': 300, '4': 400, '4.5': 500
+      '0.5': 110,
+      '1': 125,
+      '1.5': 150,
+      '2': 175,
+      '2.5': 200,
+      '3': 250,
+      '3.5': 300,
+      '4': 400,
+      '4.5': 500
     })[page.zoom]
     var zoomIcon = zoomPct < 100 ? '-minus' : '-plus'
     zoomBtn = yo`
@@ -207,7 +218,7 @@ function render (id, page) {
         <button class="nav-peers-btn" onclick=${onClickPeercount}>
           <i class="fa fa-share-alt"></i> ${numPeers} ${pluralize(numPeers, 'peer')}
         </button>`,
-      yo`<button class="nav-live-reload-btn ${isLiveReloading ? 'active': ''}" title="Turn ${isLiveReloading ? 'off' : 'on'} live reloading" onclick=${onClickLiveReload}>
+      yo`<button class="nav-live-reload-btn ${isLiveReloading ? 'active' : ''}" title="Turn ${isLiveReloading ? 'off' : 'on'} live reloading" onclick=${onClickLiveReload}>
           <i class="fa fa-bolt"></i>
         </button>`
     ]
@@ -219,7 +230,7 @@ function render (id, page) {
         onclick=${onClickGotoDatVersion}
       >
         <span class="fa fa-share-alt"></span> P2P version available
-      </button>`,
+      </button>`
     ]
   }
 
@@ -232,25 +243,24 @@ function render (id, page) {
           // content
           var iconCls = 'icon icon-' + ((r.search) ? 'search' : 'window')
           var contentColumn
-          if (r.search)
-            contentColumn = yo`<span class="result-search">${r.search}</span>`
-          else {
+          if (r.search) { contentColumn = yo`<span class="result-search">${r.search}</span>` } else {
             contentColumn = yo`<span class="result-url"></span>`
-            if (r.urlDecorated)
+            if (r.urlDecorated) {
               contentColumn.innerHTML = r.urlDecorated // use innerHTML so our decoration can show
-            else
+            } else {
               contentColumn.textContent = r.url
+            }
           }
           var titleColumn = yo`<span class="result-title"></span>`
-          if (r.titleDecorated)
+          if (r.titleDecorated) {
             titleColumn.innerHTML = r.titleDecorated // use innerHTML so our decoration can show
-          else
+          } else {
             titleColumn.textContent = r.title
+          }
 
           // selection
           var rowCls = 'result'
-          if (i == autocompleteCurrentSelection)
-            rowCls += ' selected'
+          if (i == autocompleteCurrentSelection) { rowCls += ' selected' }
 
           // result row
           return yo`<div class=${rowCls} data-result-index=${i}>
@@ -266,9 +276,12 @@ function render (id, page) {
   // preserve the current address value
   var addrEl = page && page.navbarEl.querySelector('.nav-location-input')
   var addrValue = addrEl ? addrEl.value : ''
+  if (!addrValue && page) {
+    addrValue = page.getIntendedURL()
+  }
   var isAddrElFocused = addrEl && addrEl.matches(':focus')
 
-  // setup site-perms dropdown
+  // setup menus
   siteInfoNavbarBtn.protocolInfo = (page && page.protocolInfo)
   siteInfoNavbarBtn.siteInfo = (page && page.siteInfo)
   siteInfoNavbarBtn.sitePerms = (page && page.sitePerms)
@@ -310,13 +323,14 @@ function render (id, page) {
         ${zoomBtn}
         ${datBtns}
         <button class=${bookmarkBtnClass} onclick=${onClickBookmark} title="Bookmark this page">
-          <span class=${(page && !!page.bookmark) ? "fa fa-star" : "fa fa-star-o"}></span>
+          <span class=${(page && !!page.bookmark) ? 'fa fa-star' : 'fa fa-star-o'}></span>
         </button>
+        ${pageMenuNavbarBtn.render()}
         ${autocompleteDropdown}
       </div>
       <div class="toolbar-group">
         ${datSidebarBtn.render(addrValue)}
-        ${dropMenuNavbarBtn.render()}
+        ${browserMenuNavbarBtn.render()}
         ${updatesNavbarBtn.render()}
       </div>
     </div>
@@ -349,7 +363,7 @@ function renderPrettyLocation (value, isHidden, gotInsecureResponse, siteLoadErr
         yo`<span class="syntax">://</span>`,
         yo`<span class="host">${host}</span>`,
         hostVersion ? yo`<span class="host-version">${hostVersion}</span>` : false,
-        yo`<span class="path">${pathname}${search}${hash}</span>`,
+        yo`<span class="path">${pathname}${search}${hash}</span>`
       ].filter(Boolean)
     } catch (e) {
       // invalid URL, just use value
@@ -373,11 +387,10 @@ function handleAutocompleteSearch (results) {
 
   // decorate result with bolded regions
   // explicitly replace special characters to match sqlite fts tokenization
-  var searchTerms = v.replace(/[:^*-\.\/]/g, ' ').split(' ').filter(Boolean)
+  var searchTerms = v.replace(/[:^*-./]/g, ' ').split(' ').filter(Boolean)
   results.forEach(r => decorateResultMatches(searchTerms, r))
 
   // does the value look like a url?
-  var multihashV = v.replace(/(^\/|\/$)/g,'') // strip leading and trailing slash
   var isProbablyUrl = (!v.includes(' ') && (
     /\.[A-z]/.test(v) ||
     isDatHashRegex.test(v) ||
@@ -389,28 +402,27 @@ function handleAutocompleteSearch (results) {
   var isGuessingTheScheme = false
   if (isProbablyUrl && !v.includes('://') && !(v.startsWith('beaker:'))) {
     if (isDatHashRegex.test(v)) {
-      vWithProtocol = 'dat://'+v
+      vWithProtocol = 'dat://' + v
     } else if (v.startsWith('localhost')) {
-      vWithProtocol = 'http://'+v
+      vWithProtocol = 'http://' + v
     } else {
-      vWithProtocol = 'https://'+v
+      vWithProtocol = 'https://' + v
       isGuessingTheScheme = true // note that we're guessing so that, if this fails, we can try http://
     }
   }
 
   // set the top results accordingly
-  var gotoResult = { url: vWithProtocol, title: 'Go to '+v, isGuessingTheScheme }
+  var gotoResult = { url: vWithProtocol, title: 'Go to ' + v, isGuessingTheScheme }
   var searchResult = {
     search: v,
     title: 'DuckDuckGo Search',
     url: 'https://duckduckgo.com/?q=' + v.split(' ').join('+')
   }
   if (isProbablyUrl) autocompleteResults = [gotoResult, searchResult]
-  else               autocompleteResults = [searchResult, gotoResult]
+  else autocompleteResults = [searchResult, gotoResult]
 
   // add search results
-  if (results)
-    autocompleteResults = autocompleteResults.concat(results)
+  if (results) { autocompleteResults = autocompleteResults.concat(results) }
 
   // render
   update()
@@ -446,8 +458,7 @@ var offsetsRegex = /([\d]+ [\d]+ [\d]+ [\d]+)/g
 function decorateResultMatches (searchTerms, result) {
   // extract offsets
   var tuples = (result.offsets || '').match(offsetsRegex)
-  if (!tuples)
-    return
+  if (!tuples) { return }
 
   // iterate all match tuples, and break the values into segments
   let lastTuple
@@ -455,7 +466,7 @@ function decorateResultMatches (searchTerms, result) {
   let lastOffset = { url: 0, title: 0 }
   for (let tuple of tuples) {
     tuple = tuple.split(' ').map(i => +i) // the map() coerces to the proper type
-    let [ columnIndex, termIndex, offset, matchLen ] = tuple
+    let [ columnIndex, termIndex, offset ] = tuple
     let columnName = ['url', 'title'][columnIndex]
 
     // sometimes multiple terms can hit at the same point
@@ -471,7 +482,7 @@ function decorateResultMatches (searchTerms, result) {
 
     // extract segments
     segments[columnName].push(result[columnName].slice(lastOffset[columnName], offset))
-    segments[columnName].push(result[columnName].slice(offset, offset+len))
+    segments[columnName].push(result[columnName].slice(offset, offset + len))
     lastOffset[columnName] = offset + len
   }
 
@@ -498,24 +509,19 @@ function joinSegments (segments) {
 
     // decorate with the strong tag
     if (isBold) str += '<strong>' + segment + '</strong>'
-    else        str += segment
+    else str += segment
     isBold = !isBold
   }
   return str
-}
-
-function countMatches (str, regex) {
-  var matches = str.match(regex)
-  return (matches) ? matches.length : 0
 }
 
 // ui event handlers
 // =
 
 function getEventPage (e) {
-  for (var i=0; i < e.path.length; i++)
-    if (e.path[i].dataset && e.path[i].dataset.id)
-      return pages.getById(e.path[i].dataset.id)
+  for (var i = 0; i < e.path.length; i++) {
+    if (e.path[i].dataset && e.path[i].dataset.id) { return pages.getById(e.path[i].dataset.id) }
+  }
 }
 
 function onClickBack (e) {
@@ -534,8 +540,7 @@ function onClickForward (e) {
 
 function onClickReload (e) {
   var page = getEventPage(e)
-  if (page)
-    page.reload()
+  if (page) { page.reload() }
 }
 
 function onClickCancel (e) {
@@ -567,7 +572,7 @@ function onClickGotoDatVersion (e) {
   const page = getEventPage(e)
   if (!page || !page.protocolInfo) return
 
-  const url = `dat://${page.protocolInfo.hostname}`
+  const url = `dat://${page.protocolInfo.hostname}${page.protocolInfo.pathname}`
   if (e.metaKey || e.ctrlKey) { // popup
     pages.setActive(pages.create(url))
   } else {
@@ -618,8 +623,7 @@ function onInputLocation (e) {
     autocompleteCurrentValue = autocompleteValue // update the current value
     autocompleteCurrentSelection = 0 // reset the selection
     beaker.history.search(value).then(handleAutocompleteSearch) // update the suggetsions
-  } else if (!autocompleteValue)
-    clearAutocomplete() // no value, cancel out
+  } else if (!autocompleteValue) { clearAutocomplete() } // no value, cancel out
 }
 
 function onKeydownLocation (e) {
@@ -627,9 +631,9 @@ function onKeydownLocation (e) {
   if (e.keyCode == KEYCODE_ENTER) {
     e.preventDefault()
 
-    var page = getEventPage(e)
+    let page = getEventPage(e)
     if (page) {
-      var selection = getAutocompleteSelection()
+      let selection = getAutocompleteSelection()
       page.loadURL(selection.url, { isGuessingTheScheme: selection.isGuessingTheScheme })
       e.target.blur()
     }
@@ -638,34 +642,31 @@ function onKeydownLocation (e) {
 
   // on escape
   if (e.keyCode == KEYCODE_ESC) {
-    var page = getEventPage(e)
+    let page = getEventPage(e)
     page.navbarEl.querySelector('.nav-location-input').value = page.getIntendedURL()
     e.target.blur()
     return
   }
 
   // on keycode navigations
-  var up   = (e.keyCode == KEYCODE_UP || (e.ctrlKey && e.keyCode == KEYCODE_P))
+  var up = (e.keyCode == KEYCODE_UP || (e.ctrlKey && e.keyCode == KEYCODE_P))
   var down = (e.keyCode == KEYCODE_DOWN || (e.ctrlKey && e.keyCode == KEYCODE_N))
   if (autocompleteResults && (up || down)) {
     e.preventDefault()
-    if (up && autocompleteCurrentSelection > 0)
-      autocompleteCurrentSelection--
-    if (down && autocompleteCurrentSelection < autocompleteResults.length - 1)
-      autocompleteCurrentSelection++
+    if (up && autocompleteCurrentSelection > 0) { autocompleteCurrentSelection-- }
+    if (down && autocompleteCurrentSelection < autocompleteResults.length - 1) { autocompleteCurrentSelection++ }
 
     // re-render and update the url
-    var page = getEventPage(e)
-    var newValue = getAutocompleteSelectionUrl(autocompleteCurrentSelection)
+    let page = getEventPage(e)
+    let newValue = getAutocompleteSelectionUrl(autocompleteCurrentSelection)
     page.navbarEl.querySelector('.nav-location-input').value = newValue
     update(page)
-    return
   }
 }
 
 function onClickAutocompleteDropdown (e) {
   // get the result index
-  for (var i=0; i < e.path.length; i++) {
+  for (var i = 0; i < e.path.length; i++) {
     if (e.path[i].dataset && e.path[i].classList.contains('result')) {
       // follow result url
       var resultIndex = +e.path[i].dataset.resultIndex
@@ -680,7 +681,7 @@ function onInputFind (e) {
   var page = getEventPage(e)
   if (page) {
     if (str) page.findInPageAsync(str)
-    else     page.stopFindInPageAsync('clearSelection')
+    else page.stopFindInPageAsync('clearSelection')
   }
 }
 
@@ -688,8 +689,7 @@ function onKeydownFind (e) {
   // on escape
   if (e.keyCode == KEYCODE_ESC) {
     let page = getEventPage(e)
-    if (page)
-      hideInpageFind(page)
+    if (page) { hideInpageFind(page) }
   }
 
   // on enter
@@ -699,7 +699,7 @@ function onKeydownFind (e) {
     let page = getEventPage(e)
     if (page) {
       if (str) page.findInPageAsync(str, { findNext: true, forward: !backwards })
-      else     page.stopFindInPageAsync('clearSelection')
+      else page.stopFindInPageAsync('clearSelection')
     }
   }
 }

@@ -1,6 +1,6 @@
-import path from 'path'
 import {pluralize, makeSafe} from '../../../lib/strings'
 import {stat, readdir} from 'pauls-dat-api'
+import {join as joinPaths, relative} from 'path'
 
 const styles = `<style>
   .entry {
@@ -20,19 +20,22 @@ const styles = `<style>
   }
 </style>`
 
-export default async function renderDirectoryListingPage (archive, dirPath) {
+export default async function renderDirectoryListingPage (archive, dirPath, webRoot) {
+  // handle the webroot
+  webRoot = webRoot || '/'
+  const realPath = p => joinPaths(webRoot, p)
+  const webrootPath = p => relative(webRoot, p)
+
   // list files
   var names = []
-  try { names = await readdir(archive, dirPath) }
-  catch (e) {}
+  try { names = await readdir(archive, realPath(dirPath)) } catch (e) {}
 
   // stat each file
   var entries = await Promise.all(names.map(async (name) => {
     var entry
-    var entryPath = path.join(dirPath, name)
-    try { entry = await stat(archive, entryPath) }
-    catch (e) { return false }
-    entry.path = entryPath
+    var entryPath = joinPaths(dirPath, name)
+    try { entry = await stat(archive, realPath(entryPath)) } catch (e) { return false }
+    entry.path = webrootPath(entryPath)
     entry.name = name
     return entry
   }))
@@ -49,7 +52,7 @@ export default async function renderDirectoryListingPage (archive, dirPath) {
 
   // show the updog if path is not top
   var updog = ''
-  if (dirPath !== '/' && dirPath !== '') {
+  if (['/', '', '..'].includes(webrootPath(dirPath)) === false) {
     updog = `<div class="entry updog"><a href="..">..</a></div>`
   }
 

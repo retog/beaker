@@ -1,3 +1,5 @@
+/* globals beaker DatArchive beakerSitedata URL beakerBrowser */
+
 import { remote } from 'electron'
 import EventEmitter from 'events'
 import path from 'path'
@@ -9,7 +11,7 @@ import * as sidebar from './ui/sidebar'
 import * as promptbar from './ui/promptbar'
 import * as statusBar from './ui/statusbar'
 import {urlsToData} from '../lib/fg/img'
-import { debounce } from '../lib/functions'
+import {throttle} from '../lib/functions'
 import errorPage from '../lib/error-page'
 import addAsyncAlternatives from './webview-async'
 
@@ -20,7 +22,7 @@ const ERR_ABORTED = -3
 const ERR_CONNECTION_REFUSED = -102
 const ERR_INSECURE_RESPONSE = -501
 
-const TRIGGER_LIVE_RELOAD_DEBOUNCE = 1e3 // debounce live-reload triggers by this amount
+const TRIGGER_LIVE_RELOAD_DEBOUNCE = 1e3 // throttle live-reload triggers by this amount
 
 export const FIRST_TAB_URL = 'beaker://start'
 export const DEFAULT_URL = 'beaker://start'
@@ -72,13 +74,12 @@ export function create (opts) {
   } else if (typeof opts == 'string') {
     url = opts
     opts = {}
-  } else
-    opts = {}
+  } else { opts = {} }
 
   url = url || DEFAULT_URL
 
   // create page object
-  var id = (Math.random()*1000|0) + Date.now()
+  var id = (Math.random() * 1000 | 0) + Date.now()
   var page = {
     id: id,
     wcID: null, // the id of the webcontents
@@ -152,8 +153,8 @@ export function create (opts) {
     },
 
     // cache getters to avoid sync calls to the main process
-    canGoBack() { return this._canGoBack },
-    canGoForward() { return this._canGoForward },
+    canGoBack () { return this._canGoBack },
+    canGoForward () { return this._canGoForward },
 
     // wrap webview loadURL to set the `loadingURL`
     loadURL (url, opts) {
@@ -177,11 +178,11 @@ export function create (opts) {
     },
 
     // HACK wrap reload so we can remove can-hide class
-    reload() {
+    reload () {
       // HACK to fix electron#8505
       // dont allow visibility: hidden until set active
       page.webviewEl.classList.remove('can-hide')
-      setTimeout(() => page.reloadAsync().then(console.log, console.log), 100)
+      setTimeout(() => page.reloadAsync(), 100)
       // ^ needs a delay or it doesnt take effect in time, SMH at this code though
     },
 
@@ -203,7 +204,7 @@ export function create (opts) {
       return parseURL(this.getURL()).origin
     },
 
-    isLiveReloading() {
+    isLiveReloading () {
       return !!page.liveReloadEvents
     },
 
@@ -217,7 +218,7 @@ export function create (opts) {
         page.liveReloadEvents = archive.createFileActivityStream()
         let event = (page.siteInfo.isOwner) ? 'changed' : 'invalidated'
         page.liveReloadEvents.addEventListener(event, () => {
-          page.triggerLiveReload(page.siteInfo.key)
+          page.triggerLiveReload()
         })
       }
       navbar.update(page)
@@ -231,10 +232,10 @@ export function create (opts) {
     },
 
     // reload the page due to changes in the dat
-    triggerLiveReload: debounce(archiveKey => {
+    triggerLiveReload: throttle(() => {
       page.reload()
-    }, TRIGGER_LIVE_RELOAD_DEBOUNCE, true),
-    // ^ note this is on the front edge of the debouncer.
+    }, TRIGGER_LIVE_RELOAD_DEBOUNCE),
+    // ^ note this is run on the front edge.
     // That means snappier reloads (no delay) but possible double reloads if multiple files change
 
     // helper to load the perms
@@ -307,8 +308,7 @@ export function create (opts) {
   page.webviewEl.addEventListener('page-favicon-updated', rebroadcastEvent)
 
   // make active if none others are
-  if (!activePage)
-    setActive(page)
+  if (!activePage) { setActive(page) }
 
   return page
 }
@@ -316,17 +316,15 @@ export function create (opts) {
 export async function remove (page) {
   // find
   var i = pages.indexOf(page)
-  if (i == -1)
-    return console.warn('pages.remove() called for missing page', page)
+  if (i == -1) { return console.warn('pages.remove() called for missing page', page) }
 
   // save, in case the user wants to restore it
   closedURLs.push(page.getURL())
 
   // set new active if that was
   if (page.isActive) {
-    if (pages.length == 1)
-      return window.close()
-    setActive(pages[i+1] || pages[i-1])
+    if (pages.length == 1) { return window.close() }
+    setActive(pages[i + 1] || pages[i - 1])
   }
 
   // remove
@@ -336,8 +334,7 @@ export async function remove (page) {
   webviewsDiv.removeChild(page.webviewEl)
 
   // persist pins w/o this one, if that was
-  if (page.isPinned)
-    savePinnedToDB()
+  if (page.isPinned) { savePinnedToDB() }
 
   // emit
   events.emit('remove', page)
@@ -396,27 +393,24 @@ export function togglePinned (page) {
 
 function indexOfLastPinnedTab () {
   var index = 0
-  for (index; index < pages.length; index++)
-    if (!pages[index].isPinned)
-      break
+  for (index; index < pages.length; index++) {
+    if (!pages[index].isPinned) { break }
+  }
   return index
 }
 
 export function reorderTab (page, offset) {
   // only allow increments of 1
-  if (offset > 1 || offset < -1)
-    return console.warn('reorderTabBy isnt allowed to offset more than -1 or 1; this is a coding error')
+  if (offset > 1 || offset < -1) { return console.warn('reorderTabBy isnt allowed to offset more than -1 or 1; this is a coding error') }
 
   // first check if reordering can happen
   var srcIndex = pages.indexOf(page)
   var dstIndex = srcIndex + offset
   var swapPage = pages[dstIndex]
   // is there actually a destination?
-  if (!swapPage)
-    return false
+  if (!swapPage) { return false }
   // can only swap if both are the same pinned state (pinned/unpinned cant mingle)
-  if (page.isPinned != swapPage.isPinned)
-    return false
+  if (page.isPinned != swapPage.isPinned) { return false }
 
   // ok, do the swap
   pages[srcIndex] = swapPage
@@ -427,11 +421,10 @@ export function reorderTab (page, offset) {
 export function changeActiveBy (offset) {
   if (pages.length > 1) {
     var i = pages.indexOf(activePage)
-    if (i === -1)
-      return console.warn('Active page is not in the pages list! THIS SHOULD NOT HAPPEN!')
+    if (i === -1) { return console.warn('Active page is not in the pages list! THIS SHOULD NOT HAPPEN!') }
 
     i += offset
-    if (i < 0)             i = pages.length - 1
+    if (i < 0) i = pages.length - 1
     if (i >= pages.length) i = 0
 
     setActive(pages[i])
@@ -439,8 +432,7 @@ export function changeActiveBy (offset) {
 }
 
 export function changeActiveTo (index) {
-  if (index >= 0 && index < pages.length)
-    setActive(pages[index])
+  if (index >= 0 && index < pages.length) { setActive(pages[index]) }
 }
 
 export function getActive () {
@@ -451,8 +443,7 @@ export function getAdjacentPage (page, offset) {
   if (pages.length > 1) {
     // lookup the index
     var i = pages.indexOf(page)
-    if (i === -1)
-      return null
+    if (i === -1) { return null }
 
     // add offset and return
     return pages[i + offset]
@@ -464,25 +455,22 @@ export function getByWebview (el) {
 }
 
 export function getByWebContentsID (wcID) {
-  for (var i=0; i < pages.length; i++) {
-    if (pages[i].wcID === wcID)
-      return pages[i]
+  for (var i = 0; i < pages.length; i++) {
+    if (pages[i].wcID === wcID) { return pages[i] }
   }
   return null
 }
 
 export function getById (id) {
-  for (var i=0; i < pages.length; i++) {
-    if (pages[i].id == id)
-      return pages[i]
+  for (var i = 0; i < pages.length; i++) {
+    if (pages[i].id == id) { return pages[i] }
   }
   return null
 }
 
 export function loadPinnedFromDB () {
   return beakerBrowser.getSetting('pinned-tabs').then(json => {
-    try { JSON.parse(json).forEach(url => create({ url, isPinned: true })) }
-    catch (e) {}
+    try { JSON.parse(json).forEach(url => create({ url, isPinned: true })) } catch (e) {}
   })
 }
 
@@ -507,9 +495,13 @@ function onDomReady (e) {
 }
 
 function onNewWindow (e) {
-  var page = create(e.url)
-  if (e.disposition == 'foreground-tab')
-    setActive(page)
+  var page = getByWebview(e.target)
+  if (page && page.isActive) { // only open if coming from the active tab
+    var newPage = create(e.url)
+    if (e.disposition === 'foreground-tab' || e.disposition === 'new-window') {
+      setActive(newPage)
+    }
+  }
 }
 
 // will-navigate is the first event called when a link is clicked
@@ -594,7 +586,7 @@ function onDidStopLoading (e) {
   if (page) {
     // update url
     if (page.loadingURL) {
-      url = page.url = page.loadingURL
+      page.url = page.loadingURL
     }
     var url = page.url
 
@@ -603,11 +595,11 @@ function onDidStopLoading (e) {
     updateHistory(page)
 
     // fetch protocol and page info
-    var { protocol, hostname } = url.startsWith('dat://') ? parseDatURL(url) : parseURL(url)
+    var { protocol, hostname, pathname } = url.startsWith('dat://') ? parseDatURL(url) : parseURL(url)
     page.siteInfo = null
     page.sitePerms = null
     page.siteHasDatAlternative = false
-    page.protocolInfo = {url, hostname, scheme: protocol, label: protocol.slice(0, -1).toUpperCase()}
+    page.protocolInfo = {url, hostname, pathname, scheme: protocol, label: protocol.slice(0, -1).toUpperCase()}
     if (protocol === 'https:') {
       page.checkForDatAlternative(hostname)
     }
@@ -618,7 +610,7 @@ function onDidStopLoading (e) {
           navbar.update(page)
 
           // fallback the tab title to the site title, if needed
-          if (page.getTitle() === page.getURL() && info.title) {
+          if (isEqualURL(page.getTitle(), page.getURL()) && info.title) {
             page.title = info.title
             events.emit('page-title-updated', page)
           }
@@ -755,18 +747,15 @@ function onDidFinishLoad (e) {
 
 function onDidFailLoad (e) {
   // ignore if this is a subresource
-  if (!e.isMainFrame)
-    return
+  if (!e.isMainFrame) { return }
 
   // ignore aborts. why:
   // - sometimes, aborts are caused by redirects. no biggy
   // - if the user cancels, then we dont want to give an error screen
-  if (e.errorDescription == 'ERR_ABORTED' || e.errorCode == ERR_ABORTED)
-    return
+  if (e.errorDescription == 'ERR_ABORTED' || e.errorCode == ERR_ABORTED) { return }
 
   // also ignore non-errors
-  if (e.errorCode == 0)
-    return
+  if (e.errorCode == 0) { return }
 
   var page = getByWebview(e.target)
   if (page) {
@@ -789,7 +778,7 @@ function onDidFailLoad (e) {
 
     // render failure page
     var errorPageHTML = errorPage(e)
-    page.webviewEl.executeJavaScript('document.documentElement.innerHTML = \''+errorPageHTML+'\'')
+    page.webviewEl.executeJavaScript('document.documentElement.innerHTML = \'' + errorPageHTML + '\'')
   }
 }
 
@@ -801,7 +790,9 @@ async function onPageFaviconUpdated (e) {
 
     // store favicon to db
     var res = await urlsToData(e.favicons, 64, 64)
-    beakerSitedata.set(page.getURL(), 'favicon', res.dataUrl)
+    if (res) {
+      beakerSitedata.set(page.getURL(), 'favicon', res.dataUrl)
+    }
   }
 }
 
@@ -887,7 +878,7 @@ function hide (page) {
 export function createWebviewEl (id, url) {
   var el = document.createElement('webview')
   el.dataset.id = id
-  el.setAttribute('preload', 'file://'+path.join(APP_PATH, 'webview-preload.build.js'))
+  el.setAttribute('preload', 'file://' + path.join(APP_PATH, 'webview-preload.build.js'))
   el.setAttribute('webpreferences', 'allowDisplayingInsecureContent,contentIsolation')
   // TODO re-enable nativeWindowOpen when https://github.com/electron/electron/issues/9558 lands
   el.setAttribute('src', url || DEFAULT_URL)
@@ -898,16 +889,12 @@ function rebroadcastEvent (e) {
   events.emit(e.type, getByWebview(e.target), e)
 }
 
-function warnIfError (label) {
-  return err => {
-    if (err)
-      console.warn(label, err)
-  }
+function parseURL (str) {
+  try { return new URL(str) } catch (e) { return {} }
 }
 
-function parseURL (str) {
-  try { return new URL(str) }
-  catch (e) { return {} }
+function isEqualURL (a, b) {
+  return parseURL(a).origin === parseURL(b).origin
 }
 
 function isDifferentDomain (a, b) {

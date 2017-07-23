@@ -1,3 +1,5 @@
+/* globals beakerBrowser DatArchive Event */
+
 import yo from 'yo-yo'
 import prettyBytes from 'pretty-bytes'
 import * as toast from './toast'
@@ -25,8 +27,7 @@ function rFilesList (archiveInfo, opts) {
     `
   }
 
-  // this accounts for dat.json, which is hidden by default
-  var hasFiles = Object.keys(archiveInfo.fileTree.rootNode.children).length > 1
+  var hasFiles = Object.keys(archiveInfo.fileTree.rootNode.children).length > 0
   return yo`
     <div class="files-list ${!hasFiles ? 'empty' : ''}">
       ${rChildren(archiveInfo, archiveInfo.fileTree.rootNode.children, 0, opts)}
@@ -37,15 +38,15 @@ function rFilesList (archiveInfo, opts) {
 // rendering
 // =
 
-function redraw (archiveInfo, opts={}) {
+function redraw (archiveInfo, opts = {}) {
   yo.update(document.querySelector('.files-list'), rFilesList(archiveInfo, opts))
 }
 
 function rFolder (archiveInfo, opts) {
-  if (!archiveInfo.userSettings.localPath) return ''
+  if (!archiveInfo.userSettings || !archiveInfo.userSettings.localPath) return ''
   return yo`
     <div class="dat-local-path">
-      <span>
+      <span class="path" title="${archiveInfo.userSettings.localPath}">
         ${archiveInfo.userSettings.localPath}
         ${archiveInfo.localPathExists
           ? yo`
@@ -57,7 +58,7 @@ function rFolder (archiveInfo, opts) {
       </span>
       <span class="files-list-actions">
         ${archiveInfo.isOwner && archiveInfo.localPathExists
-          ? yo `
+          ? yo`
             <a onclick=${e => onImportFiles(e, archiveInfo)} href="#">
               <i class="fa fa-plus"></i>
               Add files
@@ -75,22 +76,14 @@ function rFolder (archiveInfo, opts) {
               <em>This folder no longer exists</em>
               <i class="fa fa-exclamation-circle"></i>
             </span>`
-        }
+          }
       </span>
     </div>
   `
 }
 
-function rChildren (archiveInfo, children, depth=0, opts={}) {
-  var children = Object.keys(children)
-    .map(key => children[key])
-    .filter(node => {
-      if (node.entry.name === 'dat.json') {
-        // hide dat.json for now
-        return false
-      }
-      return true
-    })
+function rChildren (archiveInfo, children, depth = 0, opts = {}) {
+  children = Object.keys(children).map(key => children[key])
 
   if (children.length === 0 && depth === 0) {
     return yo`
@@ -105,10 +98,8 @@ function rChildren (archiveInfo, children, depth=0, opts={}) {
 
 function treeSorter (a, b) {
   // directories at top
-  if (a.entry.isDirectory() && !b.entry.isDirectory())
-    return -1
-  if (!a.entry.isDirectory() && b.entry.isDirectory())
-    return 1
+  if (a.entry.isDirectory() && !b.entry.isDirectory()) { return -1 }
+  if (!a.entry.isDirectory() && b.entry.isDirectory()) { return 1 }
   // by name
   return a.entry.name.localeCompare(b.entry.name)
 }
@@ -172,7 +163,7 @@ function rFile (archiveInfo, node, depth, opts) {
 // event handlers
 // =
 
-async function onClickDirectory (e, archiveInfo, node, opts={}) {
+async function onClickDirectory (e, archiveInfo, node, opts = {}) {
   node.isExpanded = !node.isExpanded
   if (node.isExpanded) {
     await archiveInfo.fileTree.readFolder(node)

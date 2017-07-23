@@ -8,6 +8,7 @@
 @import "../components/tabs.less";
 @import "../components/dropdown.less";
 @import "../components/buttons.less";
+@import "../components/messages.less";
 @import "./components/files-list.less";
 
 body {
@@ -343,15 +344,25 @@ section {
 }
 
 .history,
-.metadata,
+.settings,
 .files-list,
 .changes {
-  height: ~"calc(100vh - 175px)";
+  max-height: ~"calc(100vh - 175px)";
   overflow-y: auto;
 }
 
+.archive.has-changes {
+
+  .history,
+  .metadata,
+  .files-list,
+  .changes {
+    max-height: ~"calc(100vh - 230px)";
+  }
+}
+
 .history,
-.metadata,
+.settings,
 .staging {
   margin: .5rem;
 }
@@ -441,7 +452,7 @@ section {
 
   .changes-count {
     padding: 0 4px;
-    border-radius: 40%;
+    border-radius: 10px;
     background: @background-menu;
     font-weight: 500;
     font-size: .65rem;
@@ -458,10 +469,54 @@ section {
   margin: 0 .5rem;
 }
 
-.metadata {
+.settings {
+  .setting {
+    margin-bottom: 0.5rem;
+    padding: 0.25rem 0;
+
+    h5 {
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+
+    fieldset {
+      border: 1px solid @border-menu;
+      background: @background-button;
+      padding: 0;
+      border-radius: 2px;
+    }
+
+    label {
+      display: block;
+      margin: 0.5rem;
+    }
+
+    .muted {
+      color: @color-text--muted;
+      font-weight: 100;
+    }
+
+    &.disabled {
+      color: @color-text--midlight;
+
+      .muted {
+        color: @color-text--light;
+      }
+    }
+  }
 
   td.label {
     width: 75px;
+  }
+
+  .tools {
+    margin: 0.7rem 0.2rem;
+    padding: 1rem 0 0;
+    border-top: 1px solid @border-menu;
+
+    .link {
+      color: @color-text--muted;
+    }
   }
 }
 
@@ -482,4 +537,12 @@ section {
       &:extend(.link:hover);
     }
   }
+}
+
+.spinner {
+  margin: 1rem auto;
+}
+
+.message.error {
+  margin: 1rem;
 }

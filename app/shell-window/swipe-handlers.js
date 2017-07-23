@@ -2,6 +2,8 @@ import { ipcRenderer } from 'electron'
 import * as pages from './pages'
 import * as zoom from './pages/zoom'
 
+const isDarwin = window.process.platform === 'darwin'
+
 var SWIPE_TRIGGER_DIST = 400 // how far do you need to travel to trigger the navigation
 var ARROW_OFF_DIST = 80 // how far off-screen are the arrows
 
@@ -30,27 +32,25 @@ export function setup () {
   }
 
   window.addEventListener('mousewheel', e => {
-
-    // TODO add key for macOS
-    if (e.ctrlKey === true) {
+    if (!isDarwin && e.ctrlKey === true) {
       var page = pages.getActive()
       if (e.deltaY > 0) zoom.zoomOut(page)
       if (e.deltaY < 0) zoom.zoomIn(page)
     }
 
     if (isTouching) {
-
       // track amount of x & y traveled
       horizontal += e.deltaX
       vertical += e.deltaY
 
       // calculate the normalized horizontal
-      if (Math.abs(vertical) > Math.abs(horizontal))
+      if (Math.abs(vertical) > Math.abs(horizontal)) {
         hnorm = 0 // ignore if there's more vertical motion than horizontal
-      else if ((horizontal < 0 && !canGoBack()) || (horizontal > 0 && !canGoForward()))
+      } else if ((horizontal < 0 && !canGoBack()) || (horizontal > 0 && !canGoForward())) {
         hnorm = horizontal = 0 // ignore if the navigation isnt possible in that direction
-      else
+      } else {
         hnorm = horizontal / SWIPE_TRIGGER_DIST
+      }
       hnorm = Math.min(1.0, Math.max(-1.0, hnorm)) // clamp to [-1.0, 1.0]
 
       // calculate arrow positions
@@ -60,14 +60,14 @@ export function setup () {
       }
       if (horizontal > 0) {
         leftSwipeArrowEl.style.left = (-1 * ARROW_OFF_DIST) + 'px'
-        rightSwipeArrowEl.style.right = ((-1 * ARROW_OFF_DIST) + (hnorm * ARROW_OFF_DIST)) + 'px'        
+        rightSwipeArrowEl.style.right = ((-1 * ARROW_OFF_DIST) + (hnorm * ARROW_OFF_DIST)) + 'px'
       }
 
       // highlight 
       if (shouldGoBack()) leftSwipeArrowEl.classList.add('highlight')
-      else                leftSwipeArrowEl.classList.remove('highlight')
+      else leftSwipeArrowEl.classList.remove('highlight')
       if (shouldGoForward()) rightSwipeArrowEl.classList.add('highlight')
-      else                   rightSwipeArrowEl.classList.remove('highlight')
+      else rightSwipeArrowEl.classList.remove('highlight')
     }
   })
 
@@ -80,7 +80,7 @@ export function setup () {
       rightSwipeArrowEl.classList.remove('returning')
 
       // check if the item under the cursor is scrolling
-      var page = pages.getActive()
+      let page = pages.getActive()
       if (!page) return
       page.webviewEl.executeJavaScript(`
         (function() {
@@ -107,11 +107,11 @@ export function setup () {
 
       // trigger navigation
       if (shouldGoBack()) {
-        var page = pages.getActive()
+        let page = pages.getActive()
         if (page) page.goBackAsync()
       }
       if (shouldGoForward()) {
-        var page = pages.getActive()
+        let page = pages.getActive()
         if (page) page.goForwardAsync()
       }
 

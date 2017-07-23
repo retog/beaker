@@ -9,12 +9,10 @@ import signatures from 'sodium-signatures'
 import slugify from 'slugify'
 var debug = require('debug')('dat')
 import {throttle, debounce} from '../../../lib/functions'
-import {grantPermission} from '../../ui/permissions'
 
 // dat modules
 import * as archivesDb from '../../dbs/archives'
 import * as datGC from './garbage-collector'
-import hypercore from 'hypercore'
 import hypercoreProtocol from 'hypercore-protocol'
 import hyperdrive from 'hyperdrive'
 import hyperstaging from 'hyperdrive-staging-area'
@@ -66,7 +64,9 @@ export function setup () {
     // emit event
     var details = {
       url: 'dat://' + key,
-      isSaved: settings.isSaved
+      isSaved: settings.isSaved,
+      autoDownload: settings.autoDownload,
+      autoUpload: settings.autoUpload
     }
     archivesEvents.emit(settings.isSaved ? 'added' : 'removed', {details})
 
@@ -105,23 +105,6 @@ export function createDebugStream () {
   return emitStream(debugEvents)
 }
 
-export async function generateCreatedBy (url) {
-  // fetch some origin info
-  var originTitle = null
-  var origin = archivesDb.extractOrigin(url)
-  try {
-    var originKey = /dat:\/\/([^\/]*)/.exec(origin)[1]
-    var originMeta = await archivesDb.getMeta(originKey)
-    originTitle = originMeta.title || null
-  } catch (e) {}
-
-  // construct info
-  if (originTitle) {
-    return {url: origin, title: originTitle}
-  }
-  return {url: origin}
-}
-
 // read metadata for the archive, and store it in the meta db
 export async function pullLatestArchiveMeta (archive, {updateMTime} = {}) {
   try {
@@ -131,13 +114,13 @@ export async function pullLatestArchiveMeta (archive, {updateMTime} = {}) {
     await pify(archive.ready.bind(archive))()
 
     // read the archive meta and size on disk
-    var [manifest, oldMeta, _] = await Promise.all([
-      pda.readManifest(archive).catch(err => {}),
+    var [manifest, oldMeta] = await Promise.all([
+      pda.readManifest(archive).catch(_ => {}),
       archivesDb.getMeta(key),
       updateSizeTracking(archive)
     ])
     manifest = manifest || {}
-    var {title, description, forkOf, createdBy} = manifest
+    var {title, description} = manifest
     var isOwner = archive.writable
     var metaSize = archive.metaSize || 0
     var stagingSize = archive.stagingSize || 0
@@ -145,7 +128,7 @@ export async function pullLatestArchiveMeta (archive, {updateMTime} = {}) {
     var mtime = updateMTime ? Date.now() : oldMeta.mtime
 
     // write the record
-    var details = {title, description, forkOf, createdBy, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner}
+    var details = {title, description, mtime, metaSize, stagingSize, stagingSizeLessIgnored, isOwner}
     debug('Writing meta', details)
     await archivesDb.setMeta(key, details)
 
@@ -174,6 +157,7 @@ export async function createNewArchive (manifest = {}) {
 
   // write the manifest
   await pda.writeManifest(archive, manifest)
+  await pda.writeManifest(archive.stagingFS, manifest)
 
   // write the user settings
   await archivesDb.setUserSettings(0, key, userSettings)
@@ -181,30 +165,24 @@ export async function createNewArchive (manifest = {}) {
   // write the metadata
   await pullLatestArchiveMeta(archive)
 
-  // write the perms
-  if (manifest.createdBy && manifest.createdBy.url) {
-    grantPermission('modifyDat:' + key, manifest.createdBy.url)
-  }
-
   return manifest.url
 }
 
-export async function forkArchive (srcArchiveUrl, manifest={}) {
+export async function forkArchive (srcArchiveUrl, manifest = {}) {
   srcArchiveUrl = fromKeyToURL(srcArchiveUrl)
 
   // get the old archive
-  var dstArchive
   var srcArchive = getArchive(srcArchiveUrl)
   if (!srcArchive) {
     throw new Error('Invalid archive key')
   }
 
   // fetch old archive meta
-  var srcManifest = await pda.readManifest(srcArchive).catch(err => {})
+  var srcManifest = await pda.readManifest(srcArchive).catch(_ => {})
   srcManifest = srcManifest || {}
 
   // fetch old archive ignore rules
-  var ignore = ['/.dat', '/.git']
+  var ignore = ['/.dat', '/.git', '/dat.json']
   try {
     let ignoreRaw = await pda.readFile(srcArchive.stagingFS, '/.datignore', 'utf8')
     let ignoreCustomRules = hyperstaging.parseIgnoreRules(ignoreRaw)
@@ -216,9 +194,7 @@ export async function forkArchive (srcArchiveUrl, manifest={}) {
   // override any manifest data
   var dstManifest = {
     title: (manifest.title) ? manifest.title : srcManifest.title,
-    description: (manifest.description) ? manifest.description : srcManifest.description,
-    createdBy: manifest.createdBy,
-    forkOf: (srcManifest.forkOf || []).concat(srcArchiveUrl)
+    description: (manifest.description) ? manifest.description : srcManifest.description
   }
 
   // create the new archive
@@ -240,7 +216,7 @@ export async function forkArchive (srcArchiveUrl, manifest={}) {
 // archive management
 // =
 
-export async function loadArchive (key, userSettings=null) {
+export async function loadArchive (key, userSettings = null) {
   // validate key
   var secretKey
   if (key) {
@@ -280,11 +256,11 @@ export async function loadArchive (key, userSettings=null) {
 }
 
 // main logic, separated out so we can capture the promise
-async function loadArchiveInner (key, secretKey, userSettings=null) {
+async function loadArchiveInner (key, secretKey, userSettings = null) {
   // load the user settings as needed
   if (!userSettings) {
     try {
-      userSettings = await archivesDb.getUserSettings(key)
+      userSettings = await archivesDb.getUserSettings(0, key)
     } catch (e) {
       userSettings = {}
     }
@@ -383,9 +359,9 @@ export async function updateSizeTracking (archive) {
 
   // fetch sizes
   var [metaSize, stagingSize, stagingSizeLessIgnored] = await Promise.all([
-    du(archivesDb.getArchiveMetaPath(archive), {disk: true}).catch(err => 0),
-    archive.staging ? du(archive.staging.path, {disk: true}).catch(err => 0) : 0,
-    archive.staging ? du(archive.staging.path, {disk: true, filter}).catch(err => 0) : 0
+    du(archivesDb.getArchiveMetaPath(archive), {disk: true}).catch(_ => 0),
+    archive.staging ? du(archive.staging.path, {disk: true}).catch(_ => 0) : 0,
+    archive.staging ? du(archive.staging.path, {disk: true, filter}).catch(_ => 0) : 0
   ])
   archive.metaSize = metaSize
   archive.stagingSize = stagingSize
@@ -426,7 +402,12 @@ export async function getArchiveInfo (key) {
   meta.metaSize = archive.metaSize
   meta.stagingSize = archive.stagingSize
   meta.stagingSizeLessIgnored = archive.stagingSizeLessIgnored
-  meta.userSettings = {localPath: userSettings.localPath, isSaved: userSettings.isSaved}
+  meta.userSettings = {
+    localPath: userSettings.localPath,
+    isSaved: userSettings.isSaved,
+    autoDownload: userSettings.autoDownload,
+    autoUpload: userSettings.autoUpload
+  }
   meta.peers = archive.metadata.peers.length
   meta.peerInfo = archive.replicationStreams.map(s => ({
     host: s.peerInfo.host,
@@ -450,8 +431,18 @@ export async function configureStaging (archive, userSettings, isWritableOverrid
   // recreate staging
   if (isWritable && !!userSettings.localPath) {
     archive.staging = hyperstaging(archive, userSettings.localPath, {
-      ignore: ['/.dat', '/.git', '/dat.json']
+      ignore: ['/.dat', '/.git']
     })
+    if ((await jetpack.existsAsync(userSettings.localPath)) !== 'dir') {
+      return // abort here, the folder is AWOL
+    }
+
+    // restore dat.json if needed
+    const datJsonOnly = path => path !== '/dat.json'
+    var diff = await pda.diff(archive.staging, {filter: datJsonOnly})
+    if (diff.length === 1 && diff[0].change === 'del') {
+      await pda.revert(archive.staging, {filter: datJsonOnly})
+    }
   } else {
     archive.staging = null
   }
@@ -506,12 +497,32 @@ export async function deleteOldStagingFolder (oldpath, {alwaysDelete} = {}) {
   }
 }
 
+export async function clearFileCache (key) {
+  var archive = await getOrLoadArchive(key)
+  if (archive.writable) {
+    return // abort, only clear the content cache of downloaded archives
+  }
+
+  // clear the cache
+  await new Promise((resolve, reject) => {
+    archive.content.clear(0, archive.content.length, err => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+
+  // force a reconfig of the autodownloader
+  var userSettings = await archivesDb.getUserSettings(0, key)
+  stopAutodownload(archive)
+  configureAutoDownload(archive, userSettings)
+}
+
 // archive networking
 // =
 
 // put the archive into the network, for upload and download
 export function joinSwarm (key, opts) {
-  var archive = (typeof key == 'object' && key.key) ? key : getArchive(key)
+  var archive = (typeof key === 'object' && key.key) ? key : getArchive(key)
   if (!archive || archive.isSwarming) return
   archiveSwarm.join(archive.discoveryKey)
   var keyStr = datEncoding.toStr(archive.key)
@@ -521,7 +532,7 @@ export function joinSwarm (key, opts) {
 
 // take the archive out of the network
 export function leaveSwarm (key, cb) {
-  var archive = (typeof key == 'object' && key.discoveryKey) ? key : getArchive(key)
+  var archive = (typeof key === 'object' && key.discoveryKey) ? key : getArchive(key)
   if (!archive || !archive.isSwarming) return
 
   var keyStr = datEncoding.toStr(archive.key)
@@ -565,7 +576,8 @@ function configureAutoDownload (archive, userSettings) {
   // mafintosh is planning to put APIs for this inside of hyperdrive
   // till then, we'll do our own inefficient downloader
   // -prf
-  if (!archive._autodownloader && userSettings.isSaved) {
+  const isAutoDownloading = userSettings.isSaved && userSettings.autoDownload
+  if (!archive._autodownloader && isAutoDownloading) {
     // setup the autodownload
     archive._autodownloader = {
       undownloadAll: () => {
@@ -574,13 +586,18 @@ function configureAutoDownload (archive, userSettings) {
       onUpdate: throttle(() => {
         // cancel ALL previous, then prioritize ALL current
         archive._autodownloader.undownloadAll()
-        pda.download(archive, '/').catch(e => {/* ignore cancels */})
+        pda.download(archive, '/').catch(e => { /* ignore cancels */ })
       }, 5e3)
     }
     archive.metadata.on('download', archive._autodownloader.onUpdate)
-    pda.download(archive, '/').catch(e => {/* ignore cancels */})
-  } else if (archive._autodownloader && !userSettings.isSaved) {
-    // tear down the autodownload
+    pda.download(archive, '/').catch(e => { /* ignore cancels */ })
+  } else if (archive._autodownloader && !isAutoDownloading) {
+    stopAutodownload(archive)
+  }
+}
+
+function stopAutodownload (archive) {
+  if (archive._autodownloader) {
     archive._autodownloader.undownloadAll()
     archive.metadata.removeListener('download', archive._autodownloader.onUpdate)
     archive._autodownloader = null
@@ -610,7 +627,7 @@ function createReplicationStream (info) {
   function add (dkey) {
     // lookup the archive
     var dkeyStr = datEncoding.toStr(dkey)
-    var chan = dkeyStr.slice(0,6) + '..' + dkeyStr.slice(-2)
+    var chan = dkeyStr.slice(0, 6) + '..' + dkeyStr.slice(-2)
     var archive = archivesByDKey[dkeyStr]
     if (!archive) {
       return
@@ -623,7 +640,6 @@ function createReplicationStream (info) {
 
     // do some logging
     var keyStr = datEncoding.toStr(archive.key)
-    var keyStrShort = keyStr.slice(0,6) + '..' + keyStr.slice(-2)
     log(keyStr, `new connection id=${connId} dkey=${chan} type=${info.type} host=${info.host}:${info.port}`)
 
     // create the replication stream
@@ -649,7 +665,7 @@ function createReplicationStream (info) {
   stream.on('error', err => {
     log(false, `error (${Date.now() - start}ms) id=${connId} type=${info.type} host=${info.host}:${info.port} error=${err.toString()}`)
   })
-  stream.on('close', err => {
+  stream.on('close', () => {
     log(false, `closing connection (${Date.now() - start}ms) id=${connId} type=${info.type} host=${info.host}:${info.port}`)
   })
   return stream

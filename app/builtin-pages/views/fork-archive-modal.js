@@ -1,3 +1,5 @@
+/* globals beaker beakerBrowser */
+
 import * as yo from 'yo-yo'
 import {Archive} from 'builtin-pages-lib'
 
@@ -10,7 +12,6 @@ var isProcessing = false
 // form variables
 var title = ''
 var description = ''
-var createdBy
 
 // exported api
 // =
@@ -39,7 +40,6 @@ window.setup = async function (opts) {
     var archiveInfo = archive ? archive.info : {}
     title = opts.title || archiveInfo.title || ''
     description = opts.description || archiveInfo.description || ''
-    createdBy = opts.createdBy || undefined
     render()
 
     // select and focus title input
@@ -90,7 +90,7 @@ async function onSubmit (e) {
   try {
     isProcessing = true
     render()
-    var newArchive = await beaker.archives.fork(archive.info.key, {title, description, createdBy})
+    var newArchive = await beaker.archives.fork(archive.info.key, {title, description})
     beakerBrowser.closeModal(null, {url: newArchive.url})
   } catch (e) {
     beakerBrowser.closeModal({
@@ -117,7 +117,7 @@ function render () {
     </div>`
     if (!isComplete) {
       downloadBtn = yo`<button type="button" class="btn ${isDownloading ? 'disabled' : 'success'}" onclick=${onClickDownload}>
-        ${ isDownloading ? '' : 'Finish'} Downloading Files
+        ${isDownloading ? '' : 'Finish'} Downloading Files
       </button>`
     }
   } else {
@@ -160,7 +160,7 @@ function render () {
   </main>`)
 }
 
-function renderArchiveTitle(fallback) {
+function renderArchiveTitle (fallback) {
   var t = archive.info.title && `"${archive.info.title}"`
   if (!t && fallback) t = fallback
   if (!t) t = `${archive.info.key.slice(0, 8)}...`
