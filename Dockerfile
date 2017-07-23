@@ -1,4 +1,4 @@
-FROM node:6.2.1-onbuild
+FROM node:6.11.1-onbuild
 # Expose the SSH port
 EXPOSE 22
 
