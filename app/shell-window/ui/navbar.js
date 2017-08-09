@@ -56,6 +56,13 @@ export function createEl (id) {
   return el
 }
 
+export function destroyEl (id) {
+  var el = document.querySelector(`.toolbar-actions[data-id="${id}"]`)
+  if (el) {
+    toolbarNavDiv.removeChild(el)
+  }
+}
+
 export function focusLocation (page) {
   var el = page.navbarEl.querySelector('.nav-location-input')
   el.classList.remove('hidden')
@@ -276,9 +283,6 @@ function render (id, page) {
   // preserve the current address value
   var addrEl = page && page.navbarEl.querySelector('.nav-location-input')
   var addrValue = addrEl ? addrEl.value : ''
-  if (!addrValue && page) {
-    addrValue = page.getIntendedURL()
-  }
   var isAddrElFocused = addrEl && addrEl.matches(':focus')
 
   // setup menus

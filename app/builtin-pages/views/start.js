@@ -8,9 +8,9 @@ import {pluralize} from '../../lib/strings'
 
 const colorThief = new ColorThief()
 
-const LATEST_VERSION = 7003 // semver where major*1mm and minor*1k; thus 3.2.1 = 3002001
+const LATEST_VERSION = 7005 // semver where major*1mm and minor*1k; thus 3.2.1 = 3002001
 const WELCOME_URL = 'https://beakerbrowser.com/docs/using-beaker/'
-const RELEASE_NOTES_URL = 'https://beakerbrowser.com/releases/0-7-3/?updated=true'
+const RELEASE_NOTES_URL = 'https://beakerbrowser.com/releases/0-7-5/?updated=true'
 
 // globals
 // =
@@ -42,11 +42,9 @@ async function setup () {
     if (+latestVersion < LATEST_VERSION) {
       await beakerSitedata.set('beaker://start', 'latest-version', LATEST_VERSION)
       if (!latestVersion) {
-        window.open('beaker://start')
-        window.location = WELCOME_URL
+        window.open(WELCOME_URL)
       } else {
-        window.open('beaker://start')
-        window.location = RELEASE_NOTES_URL
+        window.open(RELEASE_NOTES_URL)
       }
       return
     }
